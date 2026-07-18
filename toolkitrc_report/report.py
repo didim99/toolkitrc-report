@@ -44,6 +44,8 @@ class ReportGenerator:
     """
 
     PAGE_SIZE: ClassVar[Tuple[float, float]] = (8.27, 11.69)  # A4
+    #: Uniform table row height in inches, shared by all tables.
+    TABLE_ROW_HEIGHT: ClassVar[float] = 0.28
     CELL_COLORS: ClassVar[List[str]] = \
         plt.rcParams['axes.prop_cycle'].by_key()['color']
     CHARGE_COLOR: ClassVar[str] = '#d2ffc7'
@@ -91,15 +93,20 @@ class ReportGenerator:
         fig = plt.figure(figsize=self.PAGE_SIZE)
         fig.suptitle(
             'Battery test report: {}'.format(self._test.title),
-            fontsize=14, fontweight='bold', y=0.97)
+            fontsize=14, fontweight='bold', y=0.975)
         stamp = datetime.now().strftime('%d.%m.%Y %H:%M')
-        fig.text(0.5, 0.945, 'Generated: {}'.format(stamp),
+        fig.text(0.5, 0.94, 'Generated: {}'.format(stamp),
                  ha='center', fontsize=9, color='0.35')
         cycles = self._test.working_cycles()
-        summary_ratio = max(1.0, 0.28 * (len(cycles) + 1))
-        grid = GridSpec(3, 1, figure=fig,
-                        height_ratios=[1.0, 1.0, summary_ratio],
-                        top=0.91, bottom=0.04, hspace=0.3)
+        items_rows = (len(self._test.items) + 1) // 2
+        results_rows = len(self._test.summary()) + 1
+        summary_rows = len(cycles) + 1
+        # Height ratios track the row counts so that the shared
+        # absolute row height gives every table enough space.
+        ratios = [self._table_inches(rows) for rows
+                  in (items_rows, results_rows, summary_rows)]
+        grid = GridSpec(3, 1, figure=fig, height_ratios=ratios,
+                        top=0.905, bottom=0.04, hspace=0.3)
         ax = fig.add_subplot(grid[0])
         ax.set_axis_off()
         ax.set_title('Charger parameters', fontsize=11)
@@ -233,8 +240,7 @@ class ReportGenerator:
             else:
                 row += [('', 1, None), ('', 1, None)]
             rows.append(row)
-        self._draw_table(ax, rows, [0.26, 0.24, 0.26, 0.24],
-                         row_height=0.13)
+        self._draw_table(ax, rows, [0.26, 0.24, 0.26, 0.24])
 
     def _results_table(self, ax: Axes) -> None:
         rows: List[List[TableCell]] = [
@@ -248,7 +254,7 @@ class ReportGenerator:
                 row += [(chg_value, 1, None), (dis_value, 1, None)]
             rows.append(row)
         self._draw_table(ax, rows, [0.24, 0.33, 0.33],
-                         row_height=0.12, align='left', header_rows=1)
+                         align='left', header_rows=1)
 
     def _test_summary_table(self, ax: Axes,
                             cycles: List[Tuple[int, Segment, bool]]
@@ -265,30 +271,35 @@ class ReportGenerator:
             values += self._cycle_values(segment)
             rows.append([(text, 1, color) for text in values])
         widths = [0.05, 0.13, 0.08, 0.13, 0.15, 0.15, 0.15, 0.16]
-        height = min(0.11, 0.94 / len(rows))
-        self._draw_table(ax, rows, widths, row_height=height,
-                         font_size=8, header_rows=1)
+        self._draw_table(ax, rows, widths, font_size=8,
+                         header_rows=1)
 
     def _cycle_table(self, ax: Axes, segment: Segment) -> None:
         rows: List[List[TableCell]] = [
             [(name, 1, None) for name in self.CYCLE_TABLE_NAMES],
             [(text, 1, None)
              for text in self._cycle_values(segment)]]
-        self._draw_table(ax, rows, [0.19] * 5, row_height=0.32,
-                         font_size=8, header_rows=1)
+        self._draw_table(ax, rows, [0.19] * 5, font_size=8,
+                         header_rows=1)
 
     def _draw_table(self, ax: Axes, rows: List[List[TableCell]],
-                    col_widths: List[float], row_height: float,
-                    font_size: int = 9, align: str = 'center',
+                    col_widths: List[float], font_size: int = 9,
+                    align: str = 'center',
                     header_rows: int = 0) -> None:
         """
         Render a table with column-span and background color support.
 
-        Column spans are emulated by hiding the borders between the
-        continuation cells, since matplotlib tables have no native
-        ``colspan``.
+        All tables share the same absolute row height (and therefore
+        the same vertical padding), computed from ``TABLE_ROW_HEIGHT``
+        against the height of the target axes. Column spans are
+        emulated by hiding the borders between the continuation cells,
+        since matplotlib tables have no native ``colspan``.
         """
 
+        fig_height = ax.figure.get_size_inches()[1]
+        ax_height = ax.get_position().height * fig_height
+        row_height = min(self.TABLE_ROW_HEIGHT / ax_height,
+                         1.0 / len(rows))
         table = Table(ax, loc='upper center')
         table.auto_set_font_size(False)
         for r, row in enumerate(rows):
@@ -310,6 +321,13 @@ class ReportGenerator:
                         cell.get_text().set_fontweight('bold')
                 col += span
         ax.add_table(table)
+
+    def _table_inches(self, rows: int) -> float:
+        """
+        Required table height in inches, including the title margin.
+        """
+
+        return rows * self.TABLE_ROW_HEIGHT + 0.45
 
     def _item_name(self, param: ItemParam) -> str:
         key = param.key

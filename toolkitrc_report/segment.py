@@ -71,16 +71,8 @@ class Segment:
         self._kind = self.KIND_IDLE
 
     @property
-    def source(self) -> LogFile:
-        return self._source
-
-    @property
     def interval(self) -> int:
         return self._interval
-
-    @property
-    def start_time(self) -> int:
-        return self._start_time
 
     @property
     def kind(self) -> str:
@@ -231,6 +223,6 @@ class Segment:
         rel = np.concatenate(chunks)
         data = {name: np.concatenate([p.data[name] for p in parts])
                 for name in first.data}
-        merged = cls(first.source, rel, data, first.start_time)
+        merged = cls(first._source, rel, data, first._start_time)
         merged._kind = first.kind
         return merged

@@ -51,20 +51,8 @@ class ItemParam:
         return self._key
 
     @property
-    def raw_value(self) -> str:
-        return self._raw_value
-
-    @property
-    def is_numeric(self) -> bool:
-        return self._is_numeric
-
-    @property
     def value(self) -> Optional[int]:
         return self._value
-
-    @property
-    def units(self) -> str:
-        return self._units
 
     def display_value(self) -> str:
         """
@@ -156,10 +144,6 @@ class LogFile:
     @property
     def items(self) -> Dict[str, ItemParam]:
         return self._items
-
-    @property
-    def end_params(self) -> Dict[str, ItemParam]:
-        return self._end_params
 
     @property
     def int_res(self) -> List[str]:

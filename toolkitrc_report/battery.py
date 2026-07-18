@@ -33,6 +33,9 @@ class BatteryTest:
 
     #: Value shown when a statistic cannot be computed.
     NO_VALUE: ClassVar[str] = 'n/a'
+    #: Maximum relative deviation of a full cycle's duration or
+    #: energy from the median of its kind before it is demoted.
+    MAX_FULL_DEVIATION: ClassVar[float] = 0.25
 
     _files: List[LogFile] = None
     _title: str = None
@@ -57,10 +60,6 @@ class BatteryTest:
         self._build_timeline()
 
     @property
-    def files(self) -> List[LogFile]:
-        return self._files
-
-    @property
     def title(self) -> str:
         return self._title
 
@@ -69,20 +68,8 @@ class BatteryTest:
         return self._items
 
     @property
-    def errors(self) -> List[str]:
-        return self._errors
-
-    @property
-    def int_res(self) -> List[str]:
-        return self._int_res
-
-    @property
     def segments(self) -> List[Segment]:
         return self._segments
-
-    @property
-    def full_flags(self) -> List[bool]:
-        return self._full_flags
 
     @property
     def global_time(self) -> List[np.ndarray]:
@@ -171,6 +158,16 @@ class BatteryTest:
         return 1
 
     def _detect_full_cycles(self) -> None:
+        """
+        Mark full cycles by voltage limits, then demote outliers.
+
+        A cycle that reaches both voltage limits may still be bogus
+        (e.g. logged after a state reset mid-cycle), so when at least
+        three cycles of a kind pass the voltage test, any of them
+        deviating from the median duration or energy by more than
+        ``MAX_FULL_DEVIATION`` is marked as not full.
+        """
+
         cells = self._cell_count()
         dv = self._items.get('DV')
         cv = self._items.get('CV')
@@ -179,6 +176,24 @@ class BatteryTest:
         self._full_flags = [
             bool(v_min and v_max and seg.is_full(v_min, v_max))
             for seg in self._segments]
+        self._demote_outliers(Segment.KIND_CHARGE)
+        self._demote_outliers(Segment.KIND_DISCHARGE)
+
+    def _demote_outliers(self, kind: str) -> None:
+        indices = [i for i, seg in enumerate(self._segments)
+                   if self._full_flags[i] and seg.kind == kind]
+        if len(indices) < 3:
+            return
+        med_time = float(np.median(
+            [self._segments[i].duration for i in indices]))
+        med_energy = float(np.median(
+            [self._segments[i].energy_wh for i in indices]))
+        for i in indices:
+            seg = self._segments[i]
+            dev_time = abs(seg.duration - med_time) / med_time
+            dev_energy = abs(seg.energy_wh - med_energy) / med_energy
+            if max(dev_time, dev_energy) > self.MAX_FULL_DEVIATION:
+                self._full_flags[i] = False
 
     def _build_timeline(self) -> None:
         offset = 0.0
