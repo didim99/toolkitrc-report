@@ -8,18 +8,19 @@ cycles and computes the summary statistics required by the report.
 
 from __future__ import annotations
 
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, ClassVar, Dict, List, Optional, Tuple
 
 import numpy as np
 
 from toolkitrc_report.parser import ItemParam, LogFile
 from toolkitrc_report.segment import Segment
-from toolkitrc_report.utils import format_duration
+from toolkitrc_report.utils import format_duration, format_number
 
 #: Working cycle with its 1-based number and full-cycle flag.
 CycleInfo = Tuple[int, Segment, bool]
-#: Summary table rows as (parameter name, formatted value) pairs.
-SummaryRows = List[Tuple[str, str]]
+#: Summary row: name, charge value, discharge value. A ``None``
+#: discharge value means the charge value spans both mode columns.
+SummaryRow = Tuple[str, str, Optional[str]]
 
 
 class BatteryTest:
@@ -30,27 +31,62 @@ class BatteryTest:
     discontinuities collapsed to a single log interval.
     """
 
-    files: List[LogFile] = None
-    title: str = None
-    items: Dict[str, ItemParam] = None
-    errors: List[str] = None
-    int_res: List[str] = None
+    #: Value shown when a statistic cannot be computed.
+    NO_VALUE: ClassVar[str] = 'n/a'
 
-    segments: List[Segment] = None
-    full_flags: List[bool] = None
-    global_time: List[np.ndarray] = None
+    _files: List[LogFile] = None
+    _title: str = None
+    _items: Dict[str, ItemParam] = None
+    _errors: List[str] = None
+    _int_res: List[str] = None
+
+    _segments: List[Segment] = None
+    _full_flags: List[bool] = None
+    _global_time: List[np.ndarray] = None
 
     def __init__(self, files: List[LogFile], title: str):
-        self.files = files
-        self.title = title
-        self.items = files[0].items
-        self.errors = self._collect_errors()
-        self.int_res = self._collect_int_res()
-        self.segments = []
+        self._files = files
+        self._title = title
+        self._items = files[0].items
+        self._errors = self._collect_errors()
+        self._int_res = self._collect_int_res()
+        self._segments = []
         for log in files:
-            self.segments.extend(self._split_segments(log))
+            self._segments.extend(self._split_segments(log))
         self._detect_full_cycles()
         self._build_timeline()
+
+    @property
+    def files(self) -> List[LogFile]:
+        return self._files
+
+    @property
+    def title(self) -> str:
+        return self._title
+
+    @property
+    def items(self) -> Dict[str, ItemParam]:
+        return self._items
+
+    @property
+    def errors(self) -> List[str]:
+        return self._errors
+
+    @property
+    def int_res(self) -> List[str]:
+        return self._int_res
+
+    @property
+    def segments(self) -> List[Segment]:
+        return self._segments
+
+    @property
+    def full_flags(self) -> List[bool]:
+        return self._full_flags
+
+    @property
+    def global_time(self) -> List[np.ndarray]:
+        return self._global_time
 
     def working_cycles(self) -> List[CycleInfo]:
         """
@@ -59,101 +95,111 @@ class BatteryTest:
 
         result = []
         number = 0
-        for seg, full in zip(self.segments, self.full_flags):
+        for seg, full in zip(self._segments, self._full_flags):
             if seg.is_working:
                 number += 1
                 result.append((number, seg, full))
         return result
 
-    def summary(self) -> SummaryRows:
+    def summary(self) -> List[SummaryRow]:
         """
-        Compute the report summary table as (name, value) rows.
+        Compute the summary table rows for the report.
+
+        Average and spread statistics are taken over full cycles only
+        when at least one full cycle of that mode exists, otherwise
+        over all cycles of the mode; the spread is omitted when the
+        statistic is based on a single cycle.
         """
 
-        charge = [s for s in self.segments
-                  if s.kind == Segment.KIND_CHARGE]
-        discharge = [s for s in self.segments
-                     if s.kind == Segment.KIND_DISCHARGE]
-        full_chg = [s for s, f in zip(self.segments, self.full_flags)
-                    if f and s.kind == Segment.KIND_CHARGE]
-        full_dsc = [s for s, f in zip(self.segments, self.full_flags)
-                    if f and s.kind == Segment.KIND_DISCHARGE]
-        rows: SummaryRows = []
-        self._add_stat(rows, 'CapDsc', discharge,
-                       lambda s: s.cap_mah, 'mAh')
-        self._add_stat(rows, 'CapChg', charge,
-                       lambda s: s.cap_mah, 'mAh')
-        self._add_stat(rows, 'EneDsc', discharge,
-                       lambda s: s.energy_wh * 1000.0, 'mWh')
-        self._add_stat(rows, 'EneChg', charge,
-                       lambda s: s.energy_wh * 1000.0, 'mWh')
-        self._add_stat(rows, 'TimeChg', full_chg,
-                       lambda s: float(s.duration), 's', as_time=True)
-        rows.append(('CycChg', str(len(charge))))
-        rows.append(('CycChgFull', str(len(full_chg))))
-        self._add_stat(rows, 'TimeDsc', full_dsc,
-                       lambda s: float(s.duration), 's', as_time=True)
-        rows.append(('CycDsc', str(len(discharge))))
-        rows.append(('CycDscFull', str(len(full_dsc))))
-        total = sum(seg.duration for seg in self.segments)
-        rows.append(('TimeTotal', format_duration(total)))
+        chg, chg_full = self._kind_segments(Segment.KIND_CHARGE)
+        dis, dis_full = self._kind_segments(Segment.KIND_DISCHARGE)
+        use_chg = chg_full if chg_full else chg
+        use_dis = dis_full if dis_full else dis
+        total = sum(seg.duration for seg in self._segments)
+        rows: List[SummaryRow] = [
+            ('Capacity',
+             self._stat(use_chg, lambda s: s.cap_mah, 'mAh'),
+             self._stat(use_dis, lambda s: s.cap_mah, 'mAh')),
+            ('Energy',
+             self._stat(use_chg,
+                        lambda s: s.energy_wh * 1000.0, 'mWh'),
+             self._stat(use_dis,
+                        lambda s: s.energy_wh * 1000.0, 'mWh')),
+            ('Cycle time',
+             self._stat(use_chg, lambda s: float(s.duration),
+                        '', as_time=True),
+             self._stat(use_dis, lambda s: float(s.duration),
+                        '', as_time=True)),
+            ('Cycles', str(len(chg)), str(len(dis))),
+            ('Full cycles', str(len(chg_full)), str(len(dis_full))),
+            ('Total time', format_duration(total), None),
+        ]
         return rows
+
+    def _kind_segments(self, kind: str
+                       ) -> Tuple[List[Segment], List[Segment]]:
+        """
+        All working segments of a kind and the full-cycle subset.
+        """
+
+        segments = [s for s in self._segments if s.kind == kind]
+        full = [s for s, f in zip(self._segments, self._full_flags)
+                if f and s.kind == kind]
+        return segments, full
 
     def _collect_errors(self) -> List[str]:
         errors: List[str] = []
-        for log in self.files:
+        for log in self._files:
             for err in log.errors:
                 if err not in errors:
                     errors.append(err)
         return errors
 
     def _collect_int_res(self) -> List[str]:
-        for log in self.files:
+        for log in self._files:
             if log.int_res:
                 return log.int_res
         return []
 
     def _cell_count(self) -> int:
-        cells = self.items.get('Cells')
+        cells = self._items.get('Cells')
         if cells is not None and cells.value:
             return cells.value
-        for log in self.files:
+        for log in self._files:
             if log.cell_count:
                 return log.cell_count
         return 1
 
     def _detect_full_cycles(self) -> None:
         cells = self._cell_count()
-        dv = self.items.get('DV')
-        cv = self.items.get('CV')
+        dv = self._items.get('DV')
+        cv = self._items.get('CV')
         v_min = (dv.value if dv and dv.value else 0) * cells / 1000.0
         v_max = (cv.value if cv and cv.value else 0) * cells / 1000.0
-        self.full_flags = [
+        self._full_flags = [
             bool(v_min and v_max and seg.is_full(v_min, v_max))
-            for seg in self.segments]
+            for seg in self._segments]
 
     def _build_timeline(self) -> None:
         offset = 0.0
-        self.global_time = []
-        for seg in self.segments:
-            self.global_time.append(seg.rel_time + offset)
+        self._global_time = []
+        for seg in self._segments:
+            self._global_time.append(seg.rel_time + offset)
             offset += seg.rel_time[-1] + seg.interval
 
-    def _add_stat(self, rows: SummaryRows, name: str,
-                  segments: List[Segment],
-                  getter: Callable[[Segment], float], units: str,
-                  as_time: bool = False) -> None:
+    def _stat(self, segments: List[Segment],
+              getter: Callable[[Segment], float], units: str,
+              as_time: bool = False) -> str:
         if not segments:
-            rows.append((name, 'n/a'))
-            return
+            return self.NO_VALUE
         avg, spread = self._avg_spread([getter(s) for s in segments])
         if as_time:
-            text = format_duration(int(round(avg)))
+            text = format_duration(avg)
         else:
-            text = '{:.1f} {}'.format(avg, units)
+            text = '{} {}'.format(format_number(avg), units)
         if spread is not None:
-            text += '  (spread {:.1f} %)'.format(spread)
-        rows.append((name, text))
+            text += ' (\u00b1{:.1f} %)'.format(spread)
+        return text
 
     @staticmethod
     def _split_segments(log: LogFile) -> List[Segment]:
@@ -203,7 +249,12 @@ class BatteryTest:
     @staticmethod
     def _avg_spread(values: List[float]
                     ) -> Tuple[float, Optional[float]]:
+        """
+        Average and half-range deviation in percent of the average.
+        """
+
         avg = sum(values) / len(values)
         if len(values) < 2 or not avg:
             return avg, None
-        return avg, (max(values) - min(values)) / avg * 100.0
+        half_range = (max(values) - min(values)) / 2.0
+        return avg, half_range / avg * 100.0

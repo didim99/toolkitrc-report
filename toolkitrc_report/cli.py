@@ -24,26 +24,26 @@ class Application:
     Command-line entry point: argument parsing and run orchestration.
     """
 
-    args: argparse.Namespace = None
+    _args: argparse.Namespace = None
 
     def __init__(self, argv: Optional[List[str]] = None):
-        self.args = self._parse_args(argv)
+        self._args = self._parse_args(argv)
 
     def run(self) -> int:
         """
         Execute the selected mode; returns the process exit code.
         """
 
-        if self.args.file is not None:
-            tests = self._load_single(self.args.file)
-            default_out = self.args.file.parent
+        if self._args.file is not None:
+            tests = self._load_single(self._args.file)
+            default_out = self._args.file.parent
         else:
-            tests = DirectoryScanner(self.args.dir).scan()
-            default_out = self.args.dir
+            tests = DirectoryScanner(self._args.dir).scan()
+            default_out = self._args.dir
         if not tests:
             print('error: no valid log files found', file=sys.stderr)
             return 1
-        out_dir = self.args.output or default_out
+        out_dir = self._args.output or default_out
         out_dir.mkdir(parents=True, exist_ok=True)
         for test in tests:
             target = out_dir / '{}.pdf'.format(test.title)

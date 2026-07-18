@@ -27,10 +27,10 @@ class DirectoryScanner:
     single-file tests.
     """
 
-    directory: Path = None
+    _directory: Path = None
 
     def __init__(self, directory: Path):
-        self.directory = directory
+        self._directory = directory
 
     def scan(self) -> List[BatteryTest]:
         """
@@ -39,7 +39,7 @@ class DirectoryScanner:
 
         per_cycle: Dict[Tuple, List[LogFile]] = {}
         standalone: List[LogFile] = []
-        for path in sorted(self.directory.iterdir()):
+        for path in sorted(self._directory.iterdir()):
             if not path.is_file():
                 continue
             try:

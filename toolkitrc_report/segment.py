@@ -9,7 +9,7 @@ idle (rest) period.
 
 from __future__ import annotations
 
-from typing import Dict, List
+from typing import ClassVar, Dict, List
 
 import numpy as np
 
@@ -26,69 +26,125 @@ class Segment:
     file-scope context (the strongest segment of the same file).
     """
 
-    KIND_CHARGE: str = 'charge'
-    KIND_DISCHARGE: str = 'discharge'
-    KIND_IDLE: str = 'idle'
+    KIND_CHARGE: ClassVar[str] = 'charge'
+    KIND_DISCHARGE: ClassVar[str] = 'discharge'
+    KIND_IDLE: ClassVar[str] = 'idle'
 
     #: Minimum capacity change (mAh) for a segment to count as working.
-    MIN_WORK_CAPA: int = 5
+    MIN_WORK_CAPA: ClassVar[int] = 5
     #: Working current threshold, fraction of the file's peak current.
-    MIN_WORK_CURRENT: float = 0.25
+    MIN_WORK_CURRENT: ClassVar[float] = 0.25
 
-    source: LogFile = None
-    interval: int = None
-    start_time: int = None
+    _source: LogFile = None
+    _interval: int = None
+    _start_time: int = None
 
-    kind: str = None
-    is_candidate: bool = None
+    _kind: str = None
+    _is_candidate: bool = None
 
-    rel_time: np.ndarray = None
-    data: Dict[str, np.ndarray] = None
-    vout: np.ndarray = None
-    iout: np.ndarray = None
-    power: np.ndarray = None
-    energy: np.ndarray = None
-    capa: np.ndarray = None
-    duration: int = None
-    mean_abs_i: float = None
+    _rel_time: np.ndarray = None
+    _data: Dict[str, np.ndarray] = None
+    _vout: np.ndarray = None
+    _iout: np.ndarray = None
+    _power: np.ndarray = None
+    _energy: np.ndarray = None
+    _capa: np.ndarray = None
+    _duration: int = None
+    _mean_abs_i: float = None
 
     def __init__(self, source: LogFile, rel_time: np.ndarray,
                  data: Dict[str, np.ndarray], start_time: int):
-        self.source = source
-        self.rel_time = rel_time
-        self.start_time = start_time
-        self.duration = int(rel_time[-1]) + source.interval
-        self.interval = source.interval
-        self.data = data
-        self.vout = data['Vout'] / 1000.0
-        self.iout = data['Iout'] / 1000.0
-        self.power = self.vout * self.iout
-        self.energy = self._integrate(np.abs(self.power))
-        self.capa = data['Capa'].astype(np.float64)
-        self.mean_abs_i = float(np.mean(np.abs(self.iout)))
-        self.is_candidate = (rel_time.size >= 2
-                             and self.cap_mah >= self.MIN_WORK_CAPA)
-        self.kind = self.KIND_IDLE
+        self._source = source
+        self._rel_time = rel_time
+        self._start_time = start_time
+        self._duration = int(rel_time[-1]) + source.interval
+        self._interval = source.interval
+        self._data = data
+        self._vout = data['Vout'] / 1000.0
+        self._iout = data['Iout'] / 1000.0
+        self._power = self._vout * self._iout
+        self._energy = self._integrate(np.abs(self._power))
+        self._capa = data['Capa'].astype(np.float64)
+        self._mean_abs_i = float(np.mean(np.abs(self._iout)))
+        self._is_candidate = (rel_time.size >= 2
+                              and self.cap_mah >= self.MIN_WORK_CAPA)
+        self._kind = self.KIND_IDLE
+
+    @property
+    def source(self) -> LogFile:
+        return self._source
+
+    @property
+    def interval(self) -> int:
+        return self._interval
+
+    @property
+    def start_time(self) -> int:
+        return self._start_time
+
+    @property
+    def kind(self) -> str:
+        return self._kind
+
+    @property
+    def is_candidate(self) -> bool:
+        return self._is_candidate
+
+    @property
+    def rel_time(self) -> np.ndarray:
+        return self._rel_time
+
+    @property
+    def data(self) -> Dict[str, np.ndarray]:
+        return self._data
+
+    @property
+    def vout(self) -> np.ndarray:
+        return self._vout
+
+    @property
+    def iout(self) -> np.ndarray:
+        return self._iout
+
+    @property
+    def power(self) -> np.ndarray:
+        return self._power
+
+    @property
+    def energy(self) -> np.ndarray:
+        return self._energy
+
+    @property
+    def capa(self) -> np.ndarray:
+        return self._capa
+
+    @property
+    def duration(self) -> int:
+        return self._duration
+
+    @property
+    def mean_abs_i(self) -> float:
+        return self._mean_abs_i
 
     @property
     def is_working(self) -> bool:
-        return self.kind != self.KIND_IDLE
+        return self._kind != self.KIND_IDLE
 
     @property
     def cap_mah(self) -> float:
-        return float(self.capa[-1] - self.capa[0])
+        return float(self._capa[-1] - self._capa[0])
 
     @property
     def energy_wh(self) -> float:
-        return float(self.energy[-1])
+        return float(self._energy[-1])
 
     @property
     def v_start(self) -> float:
-        return float(self.vout[0])
+        return float(self._vout[0])
 
     @property
     def v_end(self) -> float:
-        return float(self.vout[-1])
+        return float(self._vout[-1])
 
     def finalize_kind(self, peak_current: float) -> None:
         """
@@ -102,15 +158,15 @@ class Segment:
         (interrupted cycles and tapering CV phases run at low current).
         """
 
-        if not self.is_candidate:
+        if not self._is_candidate:
             return
-        working = (self.start_time == 0 or peak_current <= 0
-                   or self.mean_abs_i
+        working = (self._start_time == 0 or peak_current <= 0
+                   or self._mean_abs_i
                    >= peak_current * self.MIN_WORK_CURRENT)
         if working:
-            self.kind = (self.KIND_CHARGE
-                         if float(np.sum(self.iout)) >= 0
-                         else self.KIND_DISCHARGE)
+            self._kind = (self.KIND_CHARGE
+                          if float(np.sum(self._iout)) >= 0
+                          else self.KIND_DISCHARGE)
 
     def is_full(self, v_min: float, v_max: float) -> bool:
         """
@@ -120,9 +176,9 @@ class Segment:
         within 2% of the opposite one.
         """
 
-        if self.kind == self.KIND_CHARGE:
+        if self._kind == self.KIND_CHARGE:
             start_ref, end_ref = v_min, v_max
-        elif self.kind == self.KIND_DISCHARGE:
+        elif self._kind == self.KIND_DISCHARGE:
             start_ref, end_ref = v_max, v_min
         else:
             return False
@@ -136,7 +192,7 @@ class Segment:
 
         result = np.zeros_like(series)
         if series.size > 1:
-            steps = np.diff(self.rel_time)
+            steps = np.diff(self._rel_time)
             mean = (series[1:] + series[:-1]) / 2.0
             result[1:] = np.cumsum(mean * steps) / 3600.0
         return result
@@ -176,5 +232,5 @@ class Segment:
         data = {name: np.concatenate([p.data[name] for p in parts])
                 for name in first.data}
         merged = cls(first.source, rel, data, first.start_time)
-        merged.kind = first.kind
+        merged._kind = first.kind
         return merged
