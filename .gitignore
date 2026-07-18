@@ -1,0 +1,30 @@
+# IDE systwm files
+/.idea
+/.vs
+
+# Python internal
+/venv
+__pycache__/
+
+# Log and data files
+/log/
+/data/
+
+# Cython compile output
+/build
+*.c
+*.so
+*.html
+!templates/*.html
+
+# Python egg metadata, regenerated from source files by setuptools.
+/*.egg-info
+
+# Local configuration files
+/**/config*/
+
+# report generator internal data
+/temp/
+*.pdf
+*.xls
+*.log
