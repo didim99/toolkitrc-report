@@ -9,9 +9,13 @@ used by ``python -m toolkitrc_report``.
 from __future__ import annotations
 
 import argparse
+import logging
 import sys
 from pathlib import Path
-from typing import List, Optional
+from typing import ClassVar, List, Optional, Tuple
+
+from tqdm import tqdm
+from tqdm.contrib.logging import logging_redirect_tqdm
 
 from toolkitrc_report.battery import BatteryTest
 from toolkitrc_report.parser import LogFile, LogParseError
@@ -24,10 +28,15 @@ class Application:
     Command-line entry point: argument parsing and run orchestration.
     """
 
+    #: Logging levels selected by the number of ``-v`` flags.
+    LOG_LEVELS: ClassVar[Tuple[int, ...]] = (
+        logging.WARNING, logging.INFO, logging.DEBUG)
+
     _args: argparse.Namespace = None
 
     def __init__(self, argv: Optional[List[str]] = None):
         self._args = self._parse_args(argv)
+        self._setup_logging()
 
     def run(self) -> int:
         """
@@ -38,18 +47,29 @@ class Application:
             tests = self._load_single(self._args.file)
             default_out = self._args.file.parent
         else:
-            tests = DirectoryScanner(self._args.dir).scan()
+            with logging_redirect_tqdm():
+                tests = DirectoryScanner(self._args.dir).scan()
             default_out = self._args.dir
         if not tests:
             print('error: no valid log files found', file=sys.stderr)
             return 1
         out_dir = self._args.output or default_out
         out_dir.mkdir(parents=True, exist_ok=True)
-        for test in tests:
-            target = out_dir / '{}.pdf'.format(test.title)
-            ReportGenerator(test, target).build()
-            print('report: {}'.format(target))
+        with logging_redirect_tqdm():
+            progress = tqdm(tests, desc='Building reports',
+                            unit='test', disable=len(tests) < 2)
+            for test in progress:
+                target = out_dir / '{}.pdf'.format(test.title)
+                ReportGenerator(test, target).build()
+                tqdm.write('report: {}'.format(target))
         return 0
+
+    def _setup_logging(self) -> None:
+        level = self.LOG_LEVELS[
+            min(self._args.verbose, len(self.LOG_LEVELS) - 1)]
+        logging.basicConfig(
+            level=level, stream=sys.stderr,
+            format='%(levelname)s [%(name)s] %(message)s')
 
     @staticmethod
     def _parse_args(argv: Optional[List[str]]) -> argparse.Namespace:
@@ -66,6 +86,10 @@ class Application:
         parser.add_argument('-o', '--output', type=Path, default=None,
                             help='output directory for PDF reports '
                                  '(default: next to the input)')
+        parser.add_argument('-v', '--verbose', action='count',
+                            default=0,
+                            help='log analysis decisions (-v) and '
+                                 'low-level details (-vv)')
         return parser.parse_args(argv)
 
     @staticmethod

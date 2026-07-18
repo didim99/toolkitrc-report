@@ -8,11 +8,14 @@ per-cycle file names.
 
 from __future__ import annotations
 
+import logging
 import re
 from pathlib import Path
 from typing import ClassVar, Dict, List, Optional, Pattern, Tuple
 
 import numpy as np
+
+_log = logging.getLogger(__name__)
 
 
 class LogParseError(Exception):
@@ -221,6 +224,10 @@ class LogFile:
                         seen_error = True
                     else:
                         skip_dup = False
+                    if skip_dup:
+                        _log.debug(
+                            '%s: duplicated %s section skipped',
+                            self._path.name, section)
                     continue
                 if not line.strip() or skip_dup:
                     continue
@@ -263,6 +270,8 @@ class LogFile:
             row = [self.parse_time(fields[0])]
             row += [int(f) for f in fields[1:]]
         except (ValueError, LogParseError):
+            _log.debug('%s: malformed data line ignored: %r',
+                       self._path.name, line)
             return
         expected = len(self.DATA_COLUMNS) + 1
         if len(row) < expected:
@@ -278,6 +287,8 @@ class LogFile:
         positive = diffs[(diffs > 0) & (diffs <= 60)]
         if positive.size:
             self._interval = int(np.median(positive))
+        _log.debug('%s: %d data rows, log interval %d s',
+                   self._path.name, len(rows), self._interval)
 
     @staticmethod
     def parse_time(value: str) -> int:

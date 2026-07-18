@@ -8,6 +8,7 @@ cycles and computes the summary statistics required by the report.
 
 from __future__ import annotations
 
+import logging
 from typing import Callable, ClassVar, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -15,6 +16,8 @@ import numpy as np
 from toolkitrc_report.parser import ItemParam, LogFile
 from toolkitrc_report.segment import Segment
 from toolkitrc_report.utils import format_duration, format_number
+
+_log = logging.getLogger(__name__)
 
 #: Working cycle with its 1-based number and full-cycle flag.
 CycleInfo = Tuple[int, Segment, bool]
@@ -64,6 +67,14 @@ class BatteryTest:
         return self._title
 
     @property
+    def first_pass(self) -> Optional[int]:
+        """
+        Pass number of the first log file, if per-cycle named.
+        """
+
+        return self._files[0].pass_num
+
+    @property
     def items(self) -> Dict[str, ItemParam]:
         return self._items
 
@@ -74,6 +85,13 @@ class BatteryTest:
     @property
     def global_time(self) -> List[np.ndarray]:
         return self._global_time
+
+    def set_title(self, title: str) -> None:
+        """
+        Rename the test (used by directory-based report naming).
+        """
+
+        self._title = title
 
     def working_cycles(self) -> List[CycleInfo]:
         """
@@ -176,6 +194,11 @@ class BatteryTest:
         self._full_flags = [
             bool(v_min and v_max and seg.is_full(v_min, v_max))
             for seg in self._segments]
+        _log.debug(
+            '%s: voltage limits %.2f..%.2f V, %d of %d working '
+            'cycles marked full', self._title, v_min, v_max,
+            sum(self._full_flags),
+            sum(1 for s in self._segments if s.is_working))
         self._demote_outliers(Segment.KIND_CHARGE)
         self._demote_outliers(Segment.KIND_DISCHARGE)
 
@@ -194,6 +217,12 @@ class BatteryTest:
             dev_energy = abs(seg.energy_wh - med_energy) / med_energy
             if max(dev_time, dev_energy) > self.MAX_FULL_DEVIATION:
                 self._full_flags[i] = False
+                _log.info(
+                    '%s: %s cycle demoted from full (duration '
+                    'deviates %.0f%%, energy %.0f%% from the median; '
+                    'limit %.0f%%)', self._title, kind,
+                    dev_time * 100, dev_energy * 100,
+                    self.MAX_FULL_DEVIATION * 100)
 
     def _build_timeline(self) -> None:
         offset = 0.0
@@ -240,6 +269,14 @@ class BatteryTest:
                    default=0.0)
         for seg in segments:
             seg.finalize_kind(peak)
+            if seg.is_candidate and not seg.is_working:
+                _log.info(
+                    '%s: segment demoted to idle (mean current '
+                    '%.2f A below %.0f%% of file peak %.2f A)',
+                    log.path.name, seg.mean_abs_i,
+                    Segment.MIN_WORK_CURRENT * 100, peak)
+        _log.debug('%s: split into %d segments', log.path.name,
+                   len(segments))
         if log.is_per_cycle:
             segments = BatteryTest._merge_fragments(segments)
         return segments

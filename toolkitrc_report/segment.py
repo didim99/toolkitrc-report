@@ -9,11 +9,14 @@ idle (rest) period.
 
 from __future__ import annotations
 
+import logging
 from typing import ClassVar, Dict, List
 
 import numpy as np
 
 from toolkitrc_report.parser import LogFile
+
+_log = logging.getLogger(__name__)
 
 
 class Segment:
@@ -150,15 +153,32 @@ class Segment:
         (interrupted cycles and tapering CV phases run at low current).
         """
 
+        name = self._source.path.name
         if not self._is_candidate:
+            _log.debug(
+                '%s: segment at %d s is idle (%d rows, %.0f mAh '
+                'below the %d mAh working minimum)', name,
+                self._start_time, self._rel_time.size, self.cap_mah,
+                self.MIN_WORK_CAPA)
             return
+        threshold = peak_current * self.MIN_WORK_CURRENT
         working = (self._start_time == 0 or peak_current <= 0
-                   or self._mean_abs_i
-                   >= peak_current * self.MIN_WORK_CURRENT)
-        if working:
-            self._kind = (self.KIND_CHARGE
-                          if float(np.sum(self._iout)) >= 0
-                          else self.KIND_DISCHARGE)
+                   or self._mean_abs_i >= threshold)
+        if not working:
+            _log.debug(
+                '%s: segment at %d s is idle (mean current %.3f A '
+                'below %.3f A = %.0f%% of the file peak)', name,
+                self._start_time, self._mean_abs_i, threshold,
+                self.MIN_WORK_CURRENT * 100)
+            return
+        self._kind = (self.KIND_CHARGE
+                      if float(np.sum(self._iout)) >= 0
+                      else self.KIND_DISCHARGE)
+        _log.debug(
+            '%s: segment at %d s is a working %s (%d rows, '
+            '%.0f mAh, mean current %.3f A)', name, self._start_time,
+            self._kind, self._rel_time.size, self.cap_mah,
+            self._mean_abs_i)
 
     def is_full(self, v_min: float, v_max: float) -> bool:
         """
@@ -215,6 +235,9 @@ class Segment:
         if len(parts) == 1:
             return parts[0]
         first = parts[0]
+        _log.info(
+            '%s: %d clock-glitch fragments merged into one %s cycle',
+            first._source.path.name, len(parts), first.kind)
         chunks = []
         offset = 0.0
         for part in parts:
