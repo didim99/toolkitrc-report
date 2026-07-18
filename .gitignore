@@ -3,7 +3,7 @@
 /.vs
 
 # Python internal
-/venv
+/venv*/
 __pycache__/
 
 # Log and data files
