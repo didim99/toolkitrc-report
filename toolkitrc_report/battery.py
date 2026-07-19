@@ -179,6 +179,56 @@ class BatteryTest:
         ]
         return rows
 
+    def efficiency_pairs(self) -> List[Tuple[int, int, float]]:
+        """
+        Adjacent full-cycle pairs used for the battery efficiency
+        statistic, as ``(first_number, second_number, ratio_percent)``
+        using the 1-based numbering from :meth:`working_cycles`.
+
+        Exposed (rather than protected) because the report renderer
+        needs the cycle numbers to merge the corresponding two rows
+        of the "Eff, %" column in the Test summary table.
+
+        A test pass has one dedicated direction (e.g. discharge then
+        charge), taken from the kind of the very first working cycle
+        regardless of whether it's full — that cycle establishes the
+        pattern even if it isn't itself usable for the ratio. A pair
+        is only formed from two cycles that are both truly adjacent
+        (consecutive cycle numbers) *and* both full *and* in that
+        fixed order — cycles are not paired across an intervening
+        not-full cycle, even if each individually would otherwise be
+        full and of a usable kind, since a large numeric gap between
+        them means they aren't really the two halves of one round
+        trip.
+        """
+
+        cycles = self.working_cycles()
+        if not cycles:
+            return []
+        first_kind = cycles[0][1].kind
+        second_kind = (Segment.KIND_DISCHARGE
+                       if first_kind == Segment.KIND_CHARGE
+                       else Segment.KIND_CHARGE)
+        pairs: List[Tuple[int, int, float]] = []
+        index = 0
+        while index + 1 < len(cycles):
+            num_a, first, full_a = cycles[index]
+            num_b, second, full_b = cycles[index + 1]
+            if not (full_a and full_b
+                    and first.kind == first_kind
+                    and second.kind == second_kind):
+                index += 1
+                continue
+            charge = (first if first.kind == Segment.KIND_CHARGE
+                      else second)
+            discharge = (first if first.kind == Segment.KIND_DISCHARGE
+                        else second)
+            if charge.energy_wh > 0:
+                ratio = discharge.energy_wh / charge.energy_wh * 100.0
+                pairs.append((num_a, num_b, ratio))
+            index += 2
+        return pairs
+
     def _default_status(self) -> str:
         """
         Completion status derived from the last file alone.
@@ -310,46 +360,15 @@ class BatteryTest:
         across pairs, with the spread shown only when 2+ pairs exist.
         """
 
-        pairs = self._efficiency_pairs()
+        pairs = self.efficiency_pairs()
         if not pairs:
             return None
-        median, spread = self._median_spread(pairs)
+        ratios = [ratio for _, _, ratio in pairs]
+        median, spread = self._median_spread(ratios)
         text = '{} %'.format(format_number(median))
         if spread is not None:
             text += ' (\u00b1{:.1f} %)'.format(spread)
         return 'Battery efficiency', text, None
-
-    def _efficiency_pairs(self) -> List[float]:
-        """
-        Discharge/charge energy ratios (percent) of adjacent full
-        cycle pairs of opposite kind, in working-cycle order.
-
-        Full cycles are consumed two at a time: an adjacent pair of
-        different kinds forms one ratio; a pair of the same kind (not
-        expected in practice) yields no ratio and only the first of
-        the two is consumed, so a following cycle still gets a chance
-        to pair up.
-        """
-
-        full_cycles = [seg for seg, full
-                      in zip(self._segments, self._full_flags)
-                      if full and seg.is_working]
-        ratios: List[float] = []
-        index = 0
-        while index + 1 < len(full_cycles):
-            first, second = full_cycles[index], full_cycles[index + 1]
-            if first.kind == second.kind:
-                index += 1
-                continue
-            charge = (first if first.kind == Segment.KIND_CHARGE
-                      else second)
-            discharge = (first if first.kind == Segment.KIND_DISCHARGE
-                        else second)
-            if charge.energy_wh > 0:
-                ratios.append(
-                    discharge.energy_wh / charge.energy_wh * 100.0)
-            index += 2
-        return ratios
 
     def _stat(self, segments: List[Segment],
               getter: Callable[[Segment], float], units: str,

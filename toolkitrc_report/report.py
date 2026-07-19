@@ -34,8 +34,10 @@ from toolkitrc_report.parser import ItemParam, LogFile
 from toolkitrc_report.segment import Segment
 from toolkitrc_report.utils import format_duration
 
-#: Table cell: text, column span and optional background color.
-TableCell = Tuple[str, int, Optional[str]]
+#: Table cell: text, column span, row span and optional background
+#: color. ``None`` marks a grid position already covered by another
+#: cell's row span, and is skipped rather than rendered.
+TableCell = Optional[Tuple[str, int, int, Optional[str]]]
 #: Concatenated global time scale and data series, ready to plot.
 GlobalSeries = Tuple[np.ndarray, np.ndarray]
 
@@ -250,26 +252,27 @@ class ReportGenerator:
         params = list(self._test.items.values())
         rows: List[List[TableCell]] = []
         for i in range(0, len(params), 2):
-            row = [(self._item_name(params[i]), 1, None),
-                   (params[i].display_value(), 1, None)]
+            row = [(self._item_name(params[i]), 1, 1, None),
+                   (params[i].display_value(), 1, 1, None)]
             if i + 1 < len(params):
-                row += [(self._item_name(params[i + 1]), 1, None),
-                        (params[i + 1].display_value(), 1, None)]
+                row += [(self._item_name(params[i + 1]), 1, 1, None),
+                        (params[i + 1].display_value(), 1, 1, None)]
             else:
-                row += [('', 1, None), ('', 1, None)]
+                row += [('', 1, 1, None), ('', 1, 1, None)]
             rows.append(row)
         self._draw_table(ax, rows, [0.26, 0.24, 0.26, 0.24])
 
     def _results_table(self, ax: Axes) -> None:
         rows: List[List[TableCell]] = [
-            [('Parameter', 1, None), ('Charge', 1, None),
-             ('Discharge', 1, None)]]
+            [('Parameter', 1, 1, None), ('Charge', 1, 1, None),
+             ('Discharge', 1, 1, None)]]
         for name, chg_value, dis_value in self._test.summary():
-            row: List[TableCell] = [(name, 1, None)]
+            row: List[TableCell] = [(name, 1, 1, None)]
             if dis_value is None:
-                row.append((chg_value, 2, None))
+                row.append((chg_value, 2, 1, None))
             else:
-                row += [(chg_value, 1, None), (dis_value, 1, None)]
+                row += [(chg_value, 1, 1, None),
+                        (dis_value, 1, 1, None)]
             rows.append(row)
         self._draw_table(ax, rows, [0.24, 0.33, 0.33],
                          align='left', header_rows=1)
@@ -277,9 +280,17 @@ class ReportGenerator:
     def _test_summary_table(self, ax: Axes,
                             cycles: List[Tuple[int, Segment, bool]]
                             ) -> None:
-        header = ('#', 'Mode', 'Full') + self.CYCLE_TABLE_NAMES
+        header = (('#', 'Mode', 'Full') + self.CYCLE_TABLE_NAMES
+                 + ('Eff, %',))
         rows: List[List[TableCell]] = [
-            [(name, 1, None) for name in header]]
+            [(name, 1, 1, None) for name in header]]
+        eff_pairs = self._test.efficiency_pairs()
+        # The row-span cell is anchored at the pair's FIRST cycle and
+        # extends downward to cover the second; that second cycle's
+        # own row gets no cell for this column (None), since it's
+        # already covered by the span above it.
+        pair_start = {a: (b, ratio) for a, b, ratio in eff_pairs}
+        pair_end = {b for _, b, _ in eff_pairs}
         for number, segment, full in cycles:
             color = (self.CHARGE_COLOR
                      if segment.kind == Segment.KIND_CHARGE
@@ -287,16 +298,25 @@ class ReportGenerator:
             values = (str(number), segment.kind.capitalize(),
                       'yes' if full else 'no')
             values += self._cycle_values(segment)
-            rows.append([(text, 1, color) for text in values])
-        widths = [0.05, 0.11, 0.07, 0.12, 0.14,
-                  0.13, 0.13, 0.13, 0.12]
+            row: List[TableCell] = [(text, 1, 1, color)
+                                    for text in values]
+            if number in pair_start:
+                _, ratio = pair_start[number]
+                row.append(('{:.1f}'.format(ratio), 1, 2, None))
+            elif number in pair_end:
+                row.append(None)
+            else:
+                row.append(('-', 1, 1, None))
+            rows.append(row)
+        widths = [0.05, 0.10, 0.06, 0.11, 0.13,
+                  0.12, 0.12, 0.12, 0.11, 0.08]
         self._draw_table(ax, rows, widths, font_size=8,
                          header_rows=1)
 
     def _cycle_table(self, ax: Axes, segment: Segment) -> None:
         rows: List[List[TableCell]] = [
-            [(name, 1, None) for name in self.CYCLE_TABLE_NAMES],
-            [(text, 1, None)
+            [(name, 1, 1, None) for name in self.CYCLE_TABLE_NAMES],
+            [(text, 1, 1, None)
              for text in self._cycle_values(segment)]]
         self._draw_table(ax, rows, [0.16] * 6, font_size=8,
                          header_rows=1)
@@ -306,13 +326,21 @@ class ReportGenerator:
                     align: str = 'center',
                     header_rows: int = 0) -> None:
         """
-        Render a table with column-span and background color support.
+        Render a table with column/row-span and background color
+        support.
 
         All tables share the same absolute row height (and therefore
         the same vertical padding), computed from ``TABLE_ROW_HEIGHT``
-        against the height of the target axes. Column spans are
-        emulated by hiding the borders between the continuation cells,
-        since matplotlib tables have no native ``colspan``.
+        against the height of the target axes. Spans are emulated
+        since matplotlib tables have no native ``colspan``/``rowspan``:
+        a span hides the borders between its constituent cells, which
+        all keep the ordinary single-row height — matplotlib sizes
+        every row from the tallest cell anywhere in it, so a single
+        taller cell would misposition every *other* row above it,
+        regardless of which row of the span it's placed on. A row
+        span's label can't be centered within a single constituent
+        cell either, so its cells stay blank and the text is added
+        separately once real (post-layout) coordinates are available.
         """
 
         fig_height = ax.figure.get_size_inches()[1]
@@ -321,25 +349,78 @@ class ReportGenerator:
                          1.0 / len(rows))
         table = Table(ax, loc='upper center')
         table.auto_set_font_size(False)
+        span_labels = []
         for r, row in enumerate(rows):
             col = 0
-            for text, span, color in row:
-                for k in range(span):
-                    edges = 'BT'
-                    if k == 0:
-                        edges += 'L'
-                    if k == span - 1:
-                        edges += 'R'
-                    cell = table.add_cell(
-                        r, col + k, col_widths[col + k], row_height,
-                        text=text if k == 0 else '', loc=align,
-                        facecolor=color if color else 'none')
-                    cell.visible_edges = edges
-                    cell.set_fontsize(font_size)
-                    if r < header_rows:
-                        cell.get_text().set_fontweight('bold')
-                col += span
+            for cell_spec in row:
+                if cell_spec is None:
+                    col += 1
+                    continue
+                text, colspan, rowspan, color = cell_spec
+                cell_text = '' if rowspan > 1 else text
+                if rowspan > 1:
+                    span_labels.append((r, col, colspan, rowspan,
+                                       text, color))
+                for k in range(colspan):
+                    for j in range(rowspan):
+                        edges = ''
+                        if j == 0:
+                            edges += 'T'
+                        if j == rowspan - 1:
+                            edges += 'B'
+                        if k == 0:
+                            edges += 'L'
+                        if k == colspan - 1:
+                            edges += 'R'
+                        cell = table.add_cell(
+                            r + j, col + k, col_widths[col + k],
+                            row_height,
+                            text=cell_text if k == 0 and j == 0
+                            else '', loc=align,
+                            facecolor=color if color else 'none')
+                        cell.visible_edges = edges
+                        cell.set_fontsize(font_size)
+                        if r < header_rows:
+                            cell.get_text().set_fontweight('bold')
+                col += colspan
         ax.add_table(table)
+        if span_labels:
+            self._place_span_labels(ax, table, span_labels,
+                                    col_widths, font_size, align)
+
+    def _place_span_labels(self, ax: Axes, table: Table,
+                           span_labels: List[Tuple[
+                               int, int, int, int, str,
+                               Optional[str]]],
+                           col_widths: List[float], font_size: int,
+                           align: str) -> None:
+        """
+        Add centered text for each row span, once real coordinates
+        are known.
+
+        A row span's constituent cells are added blank (see
+        :meth:`_draw_table`) because matplotlib can't center a cell's
+        text across more than that one cell's own height. The cells'
+        final positions only exist after a real layout pass — a
+        table positioned by ``loc`` isn't placed within the axes
+        until then — so this forces one before reading them back.
+        """
+
+        ax.figure.canvas.draw()
+        for row, col, colspan, rowspan, text, color in span_labels:
+            top = table[row, col]
+            bottom = table[row + rowspan - 1, col]
+            y_center = (top.get_y() + top.get_height()
+                       + bottom.get_y()) / 2.0
+            width = sum(col_widths[col:col + colspan])
+            if align == 'left':
+                x, ha = top.get_x() + 0.01 * width, 'left'
+            elif align == 'right':
+                x, ha = top.get_x() + width - 0.01 * width, 'right'
+            else:
+                x, ha = top.get_x() + width / 2.0, 'center'
+            ax.text(x, y_center, text, ha=ha, va='center',
+                   fontsize=font_size, transform=ax.transAxes)
 
     def _table_inches(self, rows: int) -> float:
         """

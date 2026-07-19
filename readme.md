@@ -222,7 +222,9 @@ One PDF per detected test, named as described above. Structure:
 - **Test summary** — a table with one row per cycle: mode,
   full/not-full flag, duration, start/end voltage, capacity, energy,
   and per-file status, color-coded green for charge and red for
-  discharge.
+  discharge; a final **Eff, %** column shows each pair's efficiency
+  (see [Battery efficiency](#battery-efficiency)), with the cell
+  spanning the exact two rows that pair's ratio was computed from.
 
 **One page per working cycle** — duration/voltage/capacity/energy
 table plus voltage & current, power, capacity & energy plots;
@@ -299,16 +301,23 @@ Each resulting segment is then classified:
 
 #### Full cycle detection
 
-A cycle is a candidate "full" charge/discharge if it starts within
-10% and ends within 2% of the configured cut-off voltage
-(`DV`/`CV` × cell count). That condition alone isn't fully
-reliable — a cycle that happens to touch both voltage limits can
-still be spurious. For example if it's logged right after an
-external state reset, or if the battery sat unused for a long time
-after a partial discharge and its voltage relaxed back toward its
-nominal value. So when at least three candidates of the same kind
-exist, any one deviating by more than 25% (duration and/or energy)
-from the median of the group is demoted back to "not full".
+A cycle is a candidate "full" charge/discharge if it ends within 2%
+of the configured cut-off voltage (`DV`/`CV` × cell count) and
+starts close enough to the opposite limit — within 10% for charge,
+5% for discharge. Discharge uses a tighter start bound because it's
+usually the first cycle of a test (with no matching same-test full
+charge to have just come from), so a start voltage several percent
+off the charge cut-off is a stronger signal of a genuinely partial
+cycle than the same relative gap on a charge start.
+
+That condition alone isn't fully reliable — a cycle that happens to
+touch both voltage limits can still be spurious. For example if it's
+logged right after an external state reset, or if the battery sat
+unused for a long time after a partial discharge and its voltage
+relaxed back toward its nominal value. So when at least three
+candidates of the same kind exist, any one deviating by more than
+25% (duration and/or energy) from the median of the group is
+demoted back to "not full".
 
 Median/spread statistics on the summary page use only full cycles
 when at least one exists for that kind, falling back to all cycles
@@ -317,14 +326,18 @@ available.
 
 #### Battery efficiency
 
-The efficiency row pairs up adjacent full cycles of opposite kind
-(a full discharge next to a full charge, in either order) and takes
-the discharge/charge energy ratio of each pair. This is the
-round-trip energy efficiency of that specific pair, not a per-cycle
-value. Full cycles are consumed two at a time in working-cycle
-order, so no cycle contributes to more than one pair; a pair that
-happens to share the same kind (not expected in normal Cycle-mode
-testing) contributes no ratio.
+The efficiency row pairs up full cycles of opposite kind that are
+truly adjacent — consecutive cycle numbers, with nothing (full or
+not) between them — and takes the discharge/charge energy ratio of
+each pair. This is the round-trip energy efficiency of that specific
+pair, not a per-cycle value. Cycles are only paired in the test's
+own direction: the kind of the very first working cycle (full or
+not) sets that direction for the whole test, so if the test runs
+discharge-then-charge, a full charge is only paired with the full
+discharge immediately before it, never with a following discharge.
+A full cycle whose expected neighbor isn't full, or that's separated
+from its neighbor by a gap, is left unpaired rather than matched
+with a more distant one.
 
 The row is shown only when at least one such pair exists, as the
 median of all pair ratios; the spread is shown only when two or more
