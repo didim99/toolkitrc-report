@@ -4,20 +4,23 @@ Language: **EN** | [RU](readme-ru.md)
 
 ToolkitRC battery charger log analyzer and PDF report generator.
 
-Parses the log files written by a ToolkitRC charger and turns
-them into readable PDF reports: charger settings, per-cycle and
-whole-test statistics, and plots. Tested on ToolkitRC M8D charger
-against firmware **3.01** (old, single-file log layout) and
-**3.06** (new, one file per charge/discharge cycle).
+Parses the log files written by ToolkitRC chargers and turns them
+into readable PDF reports: charger settings, per-cycle and
+whole-test statistics, and plots of various charge/discharge
+parameters.
+
+Tested on files recorded by a ToolkitRC M8D charger:
+- firmware **3.01**: old format, one file for the whole test;
+- firmware **3.06**: new format, one file per charge/discharge cycle.
 
 ### Contents
 
 - [Installation](#installation)
 - [Usage](#usage)
 - [Input data](#input-data)
-- [Output report](#output-report)
-- [How it works](#how-it-works)
-- [Library usage](#library-usage)
+- [Report structure](#report-structure)
+- [Analysis method](#analysis-method)
+- [Integration](#integration)
 
 ---
 
@@ -118,7 +121,9 @@ IntRes1-8S(mou): 0  0  0  0 ...
 - **Items** — charger settings for this file: battery type, cell
   count, mode, charge/discharge current and cut-off voltage, cycle
   count, etc.
-- **Data** — one row per logged second: voltages, currents, power,
+- **Data** — one row per logged second (the logging interval can be
+  changed in the charger's settings — use the smallest available
+  interval for the most accurate data): voltages, currents, power,
   accumulated capacity, temperatures, and per-cell voltages (up to
   8S).
 - **End** — written once the file's recording stops; holds the final
@@ -132,9 +137,9 @@ parser detects and collapses the duplicate.
 
 #### Two file layouts
 
-|                 | Old (firmware 3.01)              | New (firmware 3.06+)               |
+|                 | Old (firmware 3.01)              | New (firmware 3.03+)               |
 |-----------------|----------------------------------|------------------------------------|
-| Cycles per file | all cycles of a test in one file | one cycle per file                 |
+| Cycles per file | all cycles of a test in one file | each cycle in its own file         |
 | File naming     | free-form (e.g. a timestamp)     | `Ch{N}_{Type}_{Cells}S_{Pass}.xls` |
 | Selected via    | `-f`                             | `-d`                               |
 
@@ -153,7 +158,8 @@ contain:
 - **one test** → the report is named after the directory itself;
 - **several tests with identical settings** (a battery re-tested
   several times) → named as a *test sequence*, `<dirname>-01`,
-  `<dirname>-02`, … in pass-number order;
+  `<dirname>-02`, … in pass-number order, starting at 1 regardless
+  of the underlying charger pass numbers;
 - **several tests with different settings** → the regular
   `Ch{N}_{Type}_{Cells}S_{passes}` naming is used, prefixed with the
   directory name for subdirectories (to avoid same-named reports
@@ -164,18 +170,19 @@ standalone single-file tests, same as `-f` mode.
 
 #### Notes for charger users
 
-The charger has no internal clock, so every log file is created
-with the same fixed 1980 timestamp — the file name is the only
-reliable way to tell what is where, so plan test runs with that in
-mind. On top of that, whenever the charger reboots, its internal
-file counter resets to 1 regardless of how many files are already on
-the SD card, and existing files can be silently overwritten.
+The charger has no internal real-time clock (RTC), so every log file
+is created with the same fixed 1980 timestamp — the file name is the
+only reliable way to tell what is where. So plan test runs with that
+in mind. On top of that, whenever the charger reboots, its internal
+file counter resets to 1 regardless of how many files with the same
+settings are already on the SD card, and existing files can be
+silently overwritten.
 
 > [!WARNING]
-> Clearing the log folder before each test run is the single most
-> important step for avoiding confusing or overwritten reports.
+> Clearing the log folder before you start testing is the single
+> most important step for avoiding confusing or incorrect reports.
 
-A workflow that avoids these pitfalls:
+A workflow that produces reliable results:
 
 - clear the log folder on the charger's SD card before starting;
 - run a test, or a sequence of tests, without power-cycling the
@@ -187,22 +194,24 @@ A workflow that avoids these pitfalls:
 - run the report generator on that folder and enjoy the detailed
   report.
 
-### Output report
+### Report structure
 
 One PDF per detected test, named as described above. Structure:
 
 **Page 1 — summary**
 - Title, generation timestamp, and the list of source log files
   (compacted, e.g. `CH0_LiPo_4S_{1-3}.xls`).
-- **Charger parameters** — the `Items` settings with human-readable
-  names (`CC` → Charge current, `PeakV` → ΔPeak voltage, etc.).
-- **Test results** — capacity, energy, cycle time, and cycle counts,
-  separately for charge and discharge, with average ± spread across
-  cycles; plus the overall **test status** (see
-  [Test status](#test-status)).
-- **Test summary** — one row per cycle: mode, full/not-full flag,
-  duration, start/end voltage, capacity, energy, and per-file status,
-  color-coded green for charge and red for discharge.
+- **Charger parameters** — a table of the `Items` settings with
+  human-readable names (`CC` → Charge current, `PeakV` → ΔPeak
+  voltage, etc.).
+- **Test results** — a table of capacity, energy, cycle time, and
+  cycle counts, separately for charge and discharge, with average ±
+  spread across cycles; plus the overall **test status** (see
+  [Test status](#test-status)) and the total test time.
+- **Test summary** — a table with one row per cycle: mode,
+  full/not-full flag, duration, start/end voltage, capacity, energy,
+  and per-file status, color-coded green for charge and red for
+  discharge.
 
 **One page per working cycle** — duration/voltage/capacity/energy
 table plus voltage & current, power, capacity & energy plots;
@@ -215,12 +224,12 @@ gaps between files collapsed into one continuous scale), with
 charge/discharge periods shaded, plus charger input voltage/current/
 power and temperature.
 
-### How it works
+### Analysis method
 
-The report is built from raw per-second samples, so a number of
-non-obvious calls have to be made to turn that into "cycle 3 was a
-full discharge" or "this directory is one battery tested six
-times". Every one of them is logged (`-v`/`-vv`).
+The report is built from raw samples, so a number of non-obvious
+calls have to be made to turn that into "cycle 3 was a full
+discharge" or "this directory is one battery tested six times".
+Every one of them is logged (`-v`/`-vv`).
 
 #### Test boundaries
 
@@ -249,7 +258,7 @@ between cycles of one test and don't break the grouping.
 
 #### Segment classification (working cycle vs. idle)
 
-The per-second stream is first split wherever the charger's internal
+The raw data stream is first split wherever the charger's internal
 clock jumps — a reset to `0:0:0`, a negative jump, or a gap far
 larger than the normal 1-second logging interval (the charger's
 clock is not fully reliable, especially mid-cycle on some channels).
@@ -273,12 +282,14 @@ Each resulting segment is then classified:
 
 A cycle is a candidate "full" charge/discharge if it starts within
 10% and ends within 2% of the configured cut-off voltage
-(`DV`/`CV` × cell count). That alone isn't fully reliable — a cycle
-that happens to touch both voltage limits can still be bogus, e.g.
-logged right after an unrelated state reset — so when at least three
-candidates of the same kind exist, any one deviating by more than
-25% (duration and/or energy) from the median of the group is demoted
-back to "not full".
+(`DV`/`CV` × cell count). That condition alone isn't fully
+reliable — a cycle that happens to touch both voltage limits can
+still be spurious. For example if it's logged right after an
+external state reset, or if the battery sat unused for a long time
+after a partial discharge and its voltage relaxed back toward its
+nominal value. So when at least three candidates of the same kind
+exist, any one deviating by more than 25% (duration and/or energy)
+from the median of the group is demoted back to "not full".
 
 Average/spread statistics on the summary page use only full cycles
 when at least one exists for that kind, falling back to all cycles
@@ -314,7 +325,7 @@ offset onto one continuous scale with each clock reset collapsed to
 a single log interval, so multi-file tests plot as one uninterrupted
 timeline.
 
-### Library usage
+### Integration
 
 The `toolkitrc_report` package can be imported directly:
 
@@ -327,7 +338,10 @@ for test in DirectoryScanner(Path('./M8D-log')).scan():
         test.title)).build()
 ```
 
-Public API: `LogFile`, `LogParseError`, `ItemParam` (single log file
-parsing), `Segment` (one charge/discharge/idle interval),
-`BatteryTest` (one detected test program), `DirectoryScanner`,
-`ReportGenerator`, and the `format_duration` helper.
+Public API:
+- `LogFile`, `LogParseError`, `ItemParam` (single log file parsing);
+- `Segment` (one charge/discharge/idle interval);
+- `BatteryTest` (one detected test program);
+- `DirectoryScanner` (directory scanner);
+- `ReportGenerator` (report generator);
+- the `format_duration` helper function.
