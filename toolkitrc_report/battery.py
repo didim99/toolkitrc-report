@@ -42,6 +42,7 @@ class BatteryTest:
 
     _files: List[LogFile] = None
     _title: str = None
+    _status: str = None
     _items: Dict[str, ItemParam] = None
     _errors: List[str] = None
     _int_res: List[str] = None
@@ -56,15 +57,34 @@ class BatteryTest:
         self._items = files[0].items
         self._errors = self._collect_errors()
         self._int_res = self._collect_int_res()
+        self._status = self._default_status()
         self._segments = []
         for log in files:
-            self._segments.extend(self._split_segments(log))
+            segments = self._split_segments(log)
+            self._mark_file_error(log, segments)
+            self._segments.extend(segments)
         self._detect_full_cycles()
         self._build_timeline()
 
     @property
     def title(self) -> str:
         return self._title
+
+    @property
+    def status(self) -> str:
+        """
+        Human-readable test completion status for the report.
+        """
+
+        return self._status
+
+    @property
+    def settings_key(self) -> Tuple:
+        """
+        Test-defining settings of the first file (for grouping).
+        """
+
+        return self._files[0].settings_key
 
     @property
     def first_pass(self) -> Optional[int]:
@@ -85,6 +105,15 @@ class BatteryTest:
     @property
     def global_time(self) -> List[np.ndarray]:
         return self._global_time
+
+    def set_status(self, status: str) -> None:
+        """
+        Override the completion status (used by the scanner, which
+        knows the expected file count of a test).
+        """
+
+        _log.info('%s: test status: %s', self._title, status)
+        self._status = status
 
     def set_title(self, title: str) -> None:
         """
@@ -122,6 +151,7 @@ class BatteryTest:
         use_dis = dis_full if dis_full else dis
         total = sum(seg.duration for seg in self._segments)
         rows: List[SummaryRow] = [
+            ('Test status', self._status, None),
             ('Capacity',
              self._stat(use_chg, lambda s: s.cap_mah, 'mAh'),
              self._stat(use_dis, lambda s: s.cap_mah, 'mAh')),
@@ -140,6 +170,37 @@ class BatteryTest:
             ('Total time', format_duration(total), None),
         ]
         return rows
+
+    def _default_status(self) -> str:
+        """
+        Completion status derived from the last file alone.
+
+        The scanner refines it with the expected-file-count check;
+        for standalone files this is the final status.
+        """
+
+        last = self._files[-1]
+        if last.ends_interrupted:
+            return 'error: {}'.format(last.real_errors[0])
+        if not last.has_end:
+            return 'incomplete (log truncated)'
+        status = 'completed'
+        if last.real_errors:
+            status += '; warning: {}'.format(last.real_errors[0])
+        return status
+
+    def _mark_file_error(self, log: LogFile,
+                         segments: List[Segment]) -> None:
+        """
+        Flag the last working cycle of a file that reports an error.
+        """
+
+        if not log.real_errors:
+            return
+        for segment in reversed(segments):
+            if segment.is_working:
+                segment.set_error(True)
+                break
 
     def _kind_segments(self, kind: str
                        ) -> Tuple[List[Segment], List[Segment]]:

@@ -64,12 +64,23 @@ class Application:
                 tqdm.write('report: {}'.format(target))
         return 0
 
+    #: Third-party loggers that are always disabled entirely, since
+    #: matplotlib floods INFO/DEBUG with font-cache and layout chatter
+    #: unrelated to the report generation decisions -v is meant for.
+    #: A level above CRITICAL is used (rather than the ``disabled``
+    #: flag) because it is inherited by matplotlib's child loggers
+    #: (``matplotlib.font_manager`` and similar), while ``disabled``
+    #: only applies to the exact logger it is set on.
+    DISABLED_LOGGERS: ClassVar[Tuple[str, ...]] = ('matplotlib',)
+
     def _setup_logging(self) -> None:
         level = self.LOG_LEVELS[
             min(self._args.verbose, len(self.LOG_LEVELS) - 1)]
         logging.basicConfig(
             level=level, stream=sys.stderr,
             format='%(levelname)s [%(name)s] %(message)s')
+        for name in self.DISABLED_LOGGERS:
+            logging.getLogger(name).setLevel(logging.CRITICAL + 1)
 
     @staticmethod
     def _parse_args(argv: Optional[List[str]]) -> argparse.Namespace:

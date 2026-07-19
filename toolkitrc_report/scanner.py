@@ -105,13 +105,25 @@ class DirectoryScanner:
 
     def _split_programs(self, group: List[LogFile]
                         ) -> List[BatteryTest]:
+        """
+        Split one name group into test programs.
+
+        A complete test spans ``expected_files`` sequentially numbered
+        files with the same test-defining settings; reaching that
+        count starts a new test (sequential tests of one battery). An
+        aborted cycle (a real error cutting the cycle short) ends the
+        test regardless of settings; a settings change or a pass
+        numbering gap before the expected count means the previous
+        test's data is incomplete (e.g. partially overwritten).
+        """
+
         programs: List[List[LogFile]] = []
         current: List[LogFile] = []
         for log in group:
             if current:
-                reason = self._boundary_reason(current[-1], log)
+                reason = self._boundary_reason(current, log)
                 if reason is not None:
-                    _log.info('%s: new program starts (%s)',
+                    _log.info('%s: new test starts (%s)',
                               log.path.name, reason)
                     programs.append(current)
                     current = []
@@ -121,18 +133,26 @@ class DirectoryScanner:
         return [self._make_test(files) for files in programs]
 
     @staticmethod
-    def _boundary_reason(prev: LogFile,
+    def _boundary_reason(current: List[LogFile],
                          log: LogFile) -> Optional[str]:
         """
-        Why a new program starts at this file, or None to continue.
+        Why a new test starts at this file, or None to continue.
         """
 
+        prev = current[-1]
+        if prev.ends_interrupted:
+            return 'test aborted by error in {}'.format(
+                prev.path.name)
         if prev.has_end:
-            return 'End section in {}'.format(prev.path.name)
+            return 'test terminated in {} (End section)'.format(
+                prev.path.name)
+        if len(current) >= current[0].expected_files:
+            return 'expected count of {} files reached'.format(
+                current[0].expected_files)
         if log.pass_num != prev.pass_num + 1:
             return 'pass numbering break ({} -> {})'.format(
                 prev.pass_num, log.pass_num)
-        if not log.items_equal(prev):
+        if log.settings_key != current[0].settings_key:
             return 'test settings changed'
         return None
 
@@ -143,7 +163,15 @@ class DirectoryScanner:
                   '{}-{}'.format(first.pass_num, last.pass_num))
         title = 'CH{}_{}_{}S_{}'.format(
             first.channel, first.batt_type, first.cell_count, passes)
-        return BatteryTest(files, title)
+        test = BatteryTest(files, title)
+        expected = first.expected_files
+        if len(files) < expected and not last.ends_interrupted:
+            status = 'incomplete ({} of {} files)'.format(
+                len(files), expected)
+            if last.real_errors:
+                status += '; warning: {}'.format(last.real_errors[0])
+            test.set_status(status)
+        return test
 
     @staticmethod
     def _apply_dir_naming(directory: Path, tests: List[BatteryTest],
@@ -172,8 +200,9 @@ class DirectoryScanner:
                       directory, name)
             tests[0].set_title(name)
             return
-        first_items = tests[0].items
-        if not all(test.items == first_items for test in tests[1:]):
+        settings = tests[0].settings_key
+        if not all(test.settings_key == settings
+                   for test in tests[1:]):
             if prefix_mixed:
                 _log.info(
                     '%s: %d tests with differing settings, regular '

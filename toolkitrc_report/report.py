@@ -67,7 +67,7 @@ class ReportGenerator:
     }
     CYCLE_TABLE_NAMES: ClassVar[Tuple[str, ...]] = (
         'Duration', 'Start voltage', 'End voltage',
-        'Capacity', 'Energy')
+        'Capacity', 'Energy', 'Status')
 
     _test: BatteryTest = None
     _output: Path = None
@@ -270,7 +270,8 @@ class ReportGenerator:
                       'yes' if full else 'no')
             values += self._cycle_values(segment)
             rows.append([(text, 1, color) for text in values])
-        widths = [0.05, 0.13, 0.08, 0.13, 0.15, 0.15, 0.15, 0.16]
+        widths = [0.05, 0.11, 0.07, 0.12, 0.14,
+                  0.13, 0.13, 0.13, 0.12]
         self._draw_table(ax, rows, widths, font_size=8,
                          header_rows=1)
 
@@ -279,7 +280,7 @@ class ReportGenerator:
             [(name, 1, None) for name in self.CYCLE_TABLE_NAMES],
             [(text, 1, None)
              for text in self._cycle_values(segment)]]
-        self._draw_table(ax, rows, [0.19] * 5, font_size=8,
+        self._draw_table(ax, rows, [0.16] * 6, font_size=8,
                          header_rows=1)
 
     def _draw_table(self, ax: Axes, rows: List[List[TableCell]],
@@ -423,7 +424,8 @@ class ReportGenerator:
                 '{:.3f} V'.format(segment.v_start),
                 '{:.3f} V'.format(segment.v_end),
                 '{:.3f} Ah'.format(segment.cap_mah / 1000.0),
-                '{:.3f} Wh'.format(segment.energy_wh))
+                '{:.3f} Wh'.format(segment.energy_wh),
+                'error' if segment.has_error else 'ok')
 
     @staticmethod
     def _active_cells(segment: Segment) -> List[str]:

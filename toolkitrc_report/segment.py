@@ -44,6 +44,7 @@ class Segment:
 
     _kind: str = None
     _is_candidate: bool = None
+    _has_error: bool = None
 
     _rel_time: np.ndarray = None
     _data: Dict[str, np.ndarray] = None
@@ -72,6 +73,7 @@ class Segment:
         self._is_candidate = (rel_time.size >= 2
                               and self.cap_mah >= self.MIN_WORK_CAPA)
         self._kind = self.KIND_IDLE
+        self._has_error = False
 
     @property
     def interval(self) -> int:
@@ -84,6 +86,10 @@ class Segment:
     @property
     def is_candidate(self) -> bool:
         return self._is_candidate
+
+    @property
+    def has_error(self) -> bool:
+        return self._has_error
 
     @property
     def rel_time(self) -> np.ndarray:
@@ -122,6 +128,14 @@ class Segment:
         return self._mean_abs_i
 
     @property
+    def has_file_error(self) -> bool:
+        """
+        True when the source file recorded a real error.
+        """
+
+        return bool(self._source.real_errors)
+
+    @property
     def is_working(self) -> bool:
         return self._kind != self.KIND_IDLE
 
@@ -140,6 +154,13 @@ class Segment:
     @property
     def v_end(self) -> float:
         return float(self._vout[-1])
+
+    def set_error(self, value: bool) -> None:
+        """
+        Mark the cycle as ended by an error of its source file.
+        """
+
+        self._has_error = value
 
     def finalize_kind(self, peak_current: float) -> None:
         """
@@ -248,4 +269,5 @@ class Segment:
                 for name in first.data}
         merged = cls(first._source, rel, data, first._start_time)
         merged._kind = first.kind
+        merged._has_error = parts[-1].has_error
         return merged

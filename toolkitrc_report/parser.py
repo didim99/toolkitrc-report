@@ -54,8 +54,20 @@ class ItemParam:
         return self._key
 
     @property
+    def raw_value(self) -> str:
+        return self._raw_value
+
+    @property
+    def is_numeric(self) -> bool:
+        return self._is_numeric
+
+    @property
     def value(self) -> Optional[int]:
         return self._value
+
+    @property
+    def units(self) -> str:
+        return self._units
 
     def display_value(self) -> str:
         """
@@ -71,6 +83,9 @@ class ItemParam:
     def __eq__(self, other: object):
         if not isinstance(other, ItemParam):
             return NotImplemented
+        if self._is_numeric and other._is_numeric:
+            return ((self._key, self._value, self._units)
+                    == (other._key, other._value, other._units))
         return ((self._key, self._raw_value)
                 == (other._key, other._raw_value))
 
@@ -96,6 +111,16 @@ class LogFile:
         'Vin', 'Iin', 'PowerIn', 'Vout', 'Iout', 'PowerCh',
         'Capa', 'InTmp', 'ExtTmp',
         'B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8')
+    #: Error block texts that actually mean "no error".
+    BENIGN_ERRORS: ClassVar[Tuple[str, ...]] = ('no error', 'no need')
+    #: Items that define a test; the rest may be tuned mid-test.
+    SETTINGS_KEYS: ClassVar[Tuple[str, ...]] = ('Mode', 'DMode', 'Cyc')
+    #: Mode value of cycle tests (a test spans ``2 * Cyc`` files).
+    MODE_CYCLE: ClassVar[str] = 'cycle'
+    #: Number of trailing data rows checked for an aborted cycle.
+    TAIL_ROWS: ClassVar[int] = 30
+    #: Tail current fraction of the CC/DC setting meaning an abort.
+    TAIL_CURRENT: ClassVar[float] = 0.25
 
     _path: Path = None
     _channel: Optional[int] = None
@@ -188,12 +213,81 @@ class LogFile:
 
         return (self._channel, self._batt_type, self._cell_count)
 
-    def items_equal(self, other: LogFile) -> bool:
+    @property
+    def real_errors(self) -> List[str]:
         """
-        Compare test settings with another file (program-split rule).
+        Error block lines that report an actual error.
+
+        The firmware writes an Error block into every finished file;
+        texts like ``:No need`` or ``: NO ERROR`` mean "no error" and
+        are filtered out here.
         """
 
-        return self._items == other._items
+        result = []
+        for line in self._errors:
+            text = line.strip().lstrip(':').strip().lower()
+            if text and text not in self.BENIGN_ERRORS:
+                result.append(line.strip().lstrip(':').strip())
+        return result
+
+    @property
+    def settings_key(self) -> Tuple:
+        """
+        Value-wise key of the test-defining settings.
+
+        Only the parameters that define what test runs are included
+        (``SETTINGS_KEYS``); charge/discharge currents and voltages
+        may be adjusted by the user between cycles of one test and
+        don't participate in the similarity check.
+        """
+
+        return tuple(self._param_value(key)
+                     for key in self.SETTINGS_KEYS)
+
+    @property
+    def expected_files(self) -> int:
+        """
+        Number of files one complete test is expected to produce.
+
+        A cycle-mode test writes one file per half-cycle, i.e.
+        ``2 * Cyc`` files; any other mode produces a single file.
+        """
+
+        mode = self._items.get('Mode')
+        if mode is None or mode.raw_value.lower() != self.MODE_CYCLE:
+            return 1
+        cyc = self._items.get('Cyc')
+        return 2 * (cyc.value if cyc is not None and cyc.value else 1)
+
+    @property
+    def ends_interrupted(self) -> bool:
+        """
+        True when the test was aborted by an error in this file.
+
+        The firmware records warnings (e.g. exceeded capacity) into
+        files whose cycle still ran to completion, so a real error
+        text alone is not enough: the cycle counts as aborted only
+        when the file also ends at a substantial current instead of
+        the normal taper or rest state.
+        """
+
+        if not self.real_errors:
+            return False
+        tail = self._data['Iout'][-self.TAIL_ROWS:]
+        mean_signed = float(np.mean(tail)) / 1000.0
+        setting = self._items.get('CC' if mean_signed >= 0 else 'DC')
+        if setting is None or not setting.value:
+            return True
+        threshold = setting.value / 1000.0 * self.TAIL_CURRENT
+        return abs(mean_signed) >= threshold
+
+    def _param_value(self, key: str) -> object:
+        param = self._items.get(key)
+        if param is None:
+            return None
+        if param.is_numeric:
+            return (param.value, param.units)
+        return param.raw_value.lower()
 
     def _parse_name(self) -> None:
         match = self.NAME_RE.match(self._path.stem)
