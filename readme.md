@@ -1,5 +1,7 @@
 ## toolkitrc-report
 
+Language: **EN** | [RU](readme-ru.md)
+
 ToolkitRC battery charger log analyzer and PDF report generator.
 
 Parses the log files written by a ToolkitRC charger and turns
@@ -162,7 +164,7 @@ standalone single-file tests, same as `-f` mode.
 
 #### Notes for charger users
 
-The charger has no internal RTC clock, so every log file is created
+The charger has no internal clock, so every log file is created
 with the same fixed 1980 timestamp — the file name is the only
 reliable way to tell what is where, so plan test runs with that in
 mind. On top of that, whenever the charger reboots, its internal
