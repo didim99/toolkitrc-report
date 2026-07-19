@@ -213,7 +213,7 @@ One PDF per detected test, named as described above. Structure:
   human-readable names (`CC` → Charge current, `PeakV` → ΔPeak
   voltage, etc.).
 - **Test results** — a table of capacity, energy, cycle time, and
-  cycle counts, separately for charge and discharge, with average ±
+  cycle counts, separately for charge and discharge, with median ±
   spread across cycles; the overall **battery efficiency** — median
   discharge/charge energy ratio across adjacent full cycle pairs,
   shown only when at least one such pair exists; plus the overall
@@ -240,7 +240,10 @@ power and temperature.
 The report is built from raw samples, so a number of non-obvious
 calls have to be made to turn that into "cycle 3 was a full
 discharge" or "this directory is one battery tested six times".
-Every one of them is logged (`-v`/`-vv`).
+Every one of them is logged (`-v`/`-vv`). All the "value ± spread"
+statistics in the report use the median, not the mean, so a single
+anomalous cycle (e.g. from a misdetected full cycle) doesn't skew
+the reported value more than it should.
 
 #### Test boundaries
 
@@ -307,7 +310,7 @@ nominal value. So when at least three candidates of the same kind
 exist, any one deviating by more than 25% (duration and/or energy)
 from the median of the group is demoted back to "not full".
 
-Average/spread statistics on the summary page use only full cycles
+Median/spread statistics on the summary page use only full cycles
 when at least one exists for that kind, falling back to all cycles
 otherwise; the spread is omitted when only a single value is
 available.
@@ -325,9 +328,8 @@ testing) contributes no ratio.
 
 The row is shown only when at least one such pair exists, as the
 median of all pair ratios; the spread is shown only when two or more
-pairs exist. The median is used here rather than the average because
-a single anomalous pair (e.g. from a misdetected full cycle) would
-otherwise skew the number more than it should.
+pairs exist — same convention as every other median/spread statistic
+in the report.
 
 #### Test status
 

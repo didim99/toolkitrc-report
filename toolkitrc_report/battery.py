@@ -139,7 +139,7 @@ class BatteryTest:
         """
         Compute the summary table rows for the report.
 
-        Average and spread statistics are taken over full cycles only
+        Median and spread statistics are taken over full cycles only
         when at least one full cycle of that mode exists, otherwise
         over all cycles of the mode; the spread is omitted when the
         statistic is based on a single cycle. The "Battery
@@ -356,11 +356,12 @@ class BatteryTest:
               as_time: bool = False) -> str:
         if not segments:
             return self.NO_VALUE
-        avg, spread = self._avg_spread([getter(s) for s in segments])
+        median, spread = self._median_spread(
+            [getter(s) for s in segments])
         if as_time:
-            text = format_duration(avg)
+            text = format_duration(median)
         else:
-            text = '{} {}'.format(format_number(avg), units)
+            text = '{} {}'.format(format_number(median), units)
         if spread is not None:
             text += ' (\u00b1{:.1f} %)'.format(spread)
         return text
@@ -417,19 +418,6 @@ class BatteryTest:
         if parts:
             result.append(Segment.merge(parts))
         return result
-
-    @staticmethod
-    def _avg_spread(values: List[float]
-                    ) -> Tuple[float, Optional[float]]:
-        """
-        Average and half-range deviation in percent of the average.
-        """
-
-        avg = sum(values) / len(values)
-        if len(values) < 2 or not avg:
-            return avg, None
-        half_range = (max(values) - min(values)) / 2.0
-        return avg, half_range / avg * 100.0
 
     @staticmethod
     def _median_spread(values: List[float]
