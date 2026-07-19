@@ -2,7 +2,8 @@
 
 Language: **EN** | [RU](readme-ru.md)
 
-ToolkitRC battery charger log analyzer and PDF report generator.
+ToolkitRC battery charger log analyzer and PDF report generator
+([report example](docs/repoert-example.pdf)).
 
 Parses the log files written by ToolkitRC chargers and turns them
 into readable PDF reports: charger settings, per-cycle and
