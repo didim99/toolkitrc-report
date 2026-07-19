@@ -9,6 +9,8 @@ timeline.
 
 from __future__ import annotations
 
+import re
+import textwrap
 from datetime import datetime
 from pathlib import Path
 from typing import Callable, ClassVar, Dict, List, Optional, Tuple
@@ -28,7 +30,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from toolkitrc_report.battery import BatteryTest
-from toolkitrc_report.parser import ItemParam
+from toolkitrc_report.parser import ItemParam, LogFile
 from toolkitrc_report.segment import Segment
 from toolkitrc_report.utils import format_duration
 
@@ -46,6 +48,15 @@ class ReportGenerator:
     PAGE_SIZE: ClassVar[Tuple[float, float]] = (8.27, 11.69)  # A4
     #: Uniform table row height in inches, shared by all tables.
     TABLE_ROW_HEIGHT: ClassVar[float] = 0.28
+    #: Character width used to wrap the "Used files" title line.
+    FILES_LINE_WIDTH: ClassVar[int] = 130
+    #: Vertical space reserved per extra wrapped title line, in
+    #: figure-height fraction.
+    FILES_LINE_HEIGHT: ClassVar[float] = 0.014
+    #: Pattern splitting a file stem into a name prefix and the
+    #: trailing pass number used to compact file name lists.
+    TRAILING_NUMBER_RE: ClassVar[re.Pattern] = re.compile(
+        r'^(.*?)(\d+)$')
     CELL_COLORS: ClassVar[List[str]] = \
         plt.rcParams['axes.prop_cycle'].by_key()['color']
     CHARGE_COLOR: ClassVar[str] = '#d2ffc7'
@@ -97,6 +108,12 @@ class ReportGenerator:
         stamp = datetime.now().strftime('%d.%m.%Y %H:%M')
         fig.text(0.5, 0.94, 'Generated: {}'.format(stamp),
                  ha='center', fontsize=9, color='0.35')
+        files_text = 'Used files: {}'.format(
+            self._format_used_files(self._test.files))
+        wrapped = textwrap.fill(files_text, self.FILES_LINE_WIDTH)
+        line_count = wrapped.count('\n') + 1
+        fig.text(0.5, 0.925, wrapped, ha='center', va='top',
+                 fontsize=8, color='0.35')
         cycles = self._test.working_cycles()
         items_rows = (len(self._test.items) + 1) // 2
         results_rows = len(self._test.summary()) + 1
@@ -105,8 +122,9 @@ class ReportGenerator:
         # absolute row height gives every table enough space.
         ratios = [self._table_inches(rows) for rows
                   in (items_rows, results_rows, summary_rows)]
+        top = 0.905 - self.FILES_LINE_HEIGHT * line_count
         grid = GridSpec(3, 1, figure=fig, height_ratios=ratios,
-                        top=0.905, bottom=0.04, hspace=0.3)
+                        top=top, bottom=0.04, hspace=0.3)
         ax = fig.add_subplot(grid[0])
         ax.set_axis_off()
         ax.set_title('Charger parameters', fontsize=11)
@@ -437,3 +455,52 @@ class ReportGenerator:
         if value < 0:
             return ''
         return format_duration(value)
+
+    @classmethod
+    def _format_used_files(cls, files: List[LogFile]) -> str:
+        """
+        Compact, human-readable listing of the source file names.
+
+        Files that share a name prefix and extension and differ only
+        by a trailing pass number are grouped into one
+        ``prefix{ranges}.ext`` entry (e.g. ``CH0_LiPo_4S_{1-3}.xls``);
+        anything that doesn't fit that pattern is listed as-is.
+        """
+
+        groups: Dict[Tuple[str, str], List[int]] = {}
+        loose: List[str] = []
+        for log in files:
+            match = cls.TRAILING_NUMBER_RE.match(log.path.stem)
+            if match:
+                prefix = match.group(1)
+                number = int(match.group(2))
+                key = (prefix, log.path.suffix)
+                groups.setdefault(key, []).append(number)
+            else:
+                loose.append(log.path.name)
+        entries = ['{}{}{}'.format(prefix, cls._compact_ranges(nums),
+                                   suffix)
+                   for (prefix, suffix), nums in groups.items()]
+        return ', '.join(entries + loose)
+
+    @staticmethod
+    def _compact_ranges(numbers: List[int]) -> str:
+        """
+        Format sorted integers as ``{n}`` or ``{a-b,c,d-e}``.
+        """
+
+        numbers = sorted(numbers)
+        pieces: List[str] = []
+        start = prev = numbers[0]
+        for number in numbers[1:]:
+            if number == prev + 1:
+                prev = number
+                continue
+            pieces.append(str(start) if start == prev
+                         else '{}-{}'.format(start, prev))
+            start = prev = number
+        pieces.append(str(start) if start == prev
+                     else '{}-{}'.format(start, prev))
+        if len(pieces) == 1 and len(numbers) == 1:
+            return pieces[0]
+        return '{{{}}}'.format(','.join(pieces))

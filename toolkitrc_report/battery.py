@@ -71,6 +71,14 @@ class BatteryTest:
         return self._title
 
     @property
+    def files(self) -> List[LogFile]:
+        """
+        Source log files, in the order they were combined.
+        """
+
+        return self._files
+
+    @property
     def status(self) -> str:
         """
         Human-readable test completion status for the report.
