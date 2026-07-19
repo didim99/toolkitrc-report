@@ -73,6 +73,10 @@ Full option list:
                     details (-vv)
 --log LOG           also write log messages to this file,
                     in addition to stderr
+--strict            treat any charger setting difference between
+                    files (CC/CV/DC/DV and others), not just the
+                    test-defining ones, as a test break condition
+                    (only affects -d mode)
 ```
 
 `-v`/`-vv` are useful whenever a report's grouping, cycle
@@ -92,6 +96,10 @@ python -m toolkitrc_report -d ./M8D-log -o ./reports -v
 
 # Same, also saving the full log to a file for later inspection.
 python -m toolkitrc_report -d ./M8D-log -o ./reports -vv --log run.log
+
+# Strict mode: any CC/CV/DC/DV difference between files breaks the
+# test, instead of only Mode/DMode/Cyc.
+python -m toolkitrc_report -d ./M8D-log -o ./reports --strict
 ```
 
 ### Input data
@@ -254,7 +262,12 @@ as a full test — this catches partially overwritten pass sequences.
 "Same settings" only compares the settings that define *what* the
 test is (`Mode`, `DMode`, `Cyc`), value-wise rather than by raw
 text — `CC`/`CV`/`DC`/`DV` are legitimately retuned by the user
-between cycles of one test and don't break the grouping.
+between cycles of one test and don't break the grouping by default.
+With `--strict`, any difference in any charger setting — including
+`CC`/`CV`/`DC`/`DV` — breaks the test, and the same stricter
+comparison is used when deciding whether a directory's tests share
+"identical settings" for test-sequence naming (see "Directory
+layout" above).
 
 #### Segment classification (working cycle vs. idle)
 

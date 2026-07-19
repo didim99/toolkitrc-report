@@ -48,7 +48,8 @@ class Application:
             default_out = self._args.file.parent
         else:
             with logging_redirect_tqdm():
-                tests = DirectoryScanner(self._args.dir).scan()
+                tests = DirectoryScanner(
+                    self._args.dir, strict=self._args.strict).scan()
             default_out = self._args.dir
         if not tests:
             print('error: no valid log files found', file=sys.stderr)
@@ -107,6 +108,12 @@ class Application:
         parser.add_argument('--log', type=Path, default=None,
                             help='also write log messages to this '
                                  'file, in addition to stderr')
+        parser.add_argument('--strict', action='store_true',
+                            help='treat any difference in charger '
+                                 'settings (CC/CV/DC/DV and others), '
+                                 'not just the test-defining ones, '
+                                 'as a test break condition; only '
+                                 'affects -d mode')
         return parser.parse_args(argv)
 
     @staticmethod

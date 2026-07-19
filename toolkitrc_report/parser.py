@@ -80,14 +80,22 @@ class ItemParam:
             return '{} {}'.format(self._value, self._units)
         return self._raw_value
 
+    def canonical(self) -> Tuple:
+        """
+        Hashable, value-wise representation for equality comparisons.
+
+        Numeric parameters compare by value and units rather than raw
+        text, so ``4200mV`` and ``4200 mV`` are considered equal.
+        """
+
+        if self._is_numeric:
+            return (self._key, self._value, self._units)
+        return (self._key, self._raw_value)
+
     def __eq__(self, other: object):
         if not isinstance(other, ItemParam):
             return NotImplemented
-        if self._is_numeric and other._is_numeric:
-            return ((self._key, self._value, self._units)
-                    == (other._key, other._value, other._units))
-        return ((self._key, self._raw_value)
-                == (other._key, other._raw_value))
+        return self.canonical() == other.canonical()
 
     def __repr__(self):
         return 'ItemParam({}:{})'.format(self._key, self._raw_value)
@@ -238,11 +246,26 @@ class LogFile:
         Only the parameters that define what test runs are included
         (``SETTINGS_KEYS``); charge/discharge currents and voltages
         may be adjusted by the user between cycles of one test and
-        don't participate in the similarity check.
+        don't participate in the similarity check. See
+        :attr:`strict_settings_key` for a stricter comparison.
         """
 
         return tuple(self._param_value(key)
                      for key in self.SETTINGS_KEYS)
+
+    @property
+    def strict_settings_key(self) -> Tuple:
+        """
+        Value-wise key of every charger setting (``--strict`` mode).
+
+        Unlike :attr:`settings_key`, this includes CC/CV/DC/DV and
+        every other ``Items`` entry, so any difference between files
+        — not just the test-defining ones — counts as a settings
+        change.
+        """
+
+        return tuple(sorted(
+            param.canonical() for param in self._items.values()))
 
     @property
     def expected_files(self) -> int:

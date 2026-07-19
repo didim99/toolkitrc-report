@@ -87,14 +87,6 @@ class BatteryTest:
         return self._status
 
     @property
-    def settings_key(self) -> Tuple:
-        """
-        Test-defining settings of the first file (for grouping).
-        """
-
-        return self._files[0].settings_key
-
-    @property
     def first_pass(self) -> Optional[int]:
         """
         Pass number of the first log file, if per-cycle named.

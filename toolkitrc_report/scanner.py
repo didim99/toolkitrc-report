@@ -32,6 +32,12 @@ class DirectoryScanner:
     don't follow the per-cycle naming scheme are treated as standalone
     single-file tests.
 
+    By default, a settings change only breaks a program when it
+    affects the test-defining settings (``Mode``, ``DMode``, ``Cyc``)
+    — CC/CV/DC/DV are allowed to drift between cycles of one test. In
+    ``strict`` mode any difference in any charger setting, including
+    CC/CV/DC/DV, is treated as a test break.
+
     The scanned directory itself and every subdirectory that
     contains ``.xls`` files are treated as candidates, and the
     directory name drives the report naming: a single test is named
@@ -42,9 +48,11 @@ class DirectoryScanner:
     """
 
     _directory: Path = None
+    _strict: bool = None
 
-    def __init__(self, directory: Path):
+    def __init__(self, directory: Path, strict: bool = False):
         self._directory = directory
+        self._strict = strict
 
     def scan(self) -> List[BatteryTest]:
         """
@@ -134,8 +142,18 @@ class DirectoryScanner:
             programs.append(current)
         return [self._make_test(files) for files in programs]
 
-    @staticmethod
-    def _boundary_reason(current: List[LogFile],
+    def _settings_key(self, log: LogFile) -> Tuple:
+        """
+        The settings key used for similarity checks in this scan.
+
+        Strict mode compares every charger setting; the default
+        compares only the test-defining ones. See
+        :attr:`LogFile.strict_settings_key`.
+        """
+
+        return log.strict_settings_key if self._strict else log.settings_key
+
+    def _boundary_reason(self, current: List[LogFile],
                          log: LogFile) -> Optional[str]:
         """
         Why a new test starts at this file, or None to continue.
@@ -156,6 +174,11 @@ class DirectoryScanner:
                 prev.pass_num, log.pass_num)
         if log.settings_key != current[0].settings_key:
             return 'test settings changed'
+        if (self._strict
+                and log.strict_settings_key
+                != current[0].strict_settings_key):
+            return 'test settings changed (strict mode: charger ' \
+                   'settings differ)'
         return None
 
     @staticmethod
@@ -175,8 +198,8 @@ class DirectoryScanner:
             test.set_status(status)
         return test
 
-    @staticmethod
-    def _apply_dir_naming(directory: Path, tests: List[BatteryTest],
+    def _apply_dir_naming(self, directory: Path,
+                          tests: List[BatteryTest],
                           prefix_mixed: bool) -> None:
         """
         Rename the tests of a directory candidate.
@@ -187,7 +210,9 @@ class DirectoryScanner:
         :meth:`_make_test` are kept — prefixed with the directory
         name for subdirectory candidates (``prefix_mixed``), since
         equally named programs from different subdirectories would
-        otherwise overwrite each other's reports.
+        otherwise overwrite each other's reports. "Identical
+        settings" follows the same strict/default comparison as
+        program splitting.
         """
 
         if not tests:
@@ -202,8 +227,8 @@ class DirectoryScanner:
                       directory, name)
             tests[0].set_title(name)
             return
-        settings = tests[0].settings_key
-        if not all(test.settings_key == settings
+        settings = self._settings_key(tests[0].files[0])
+        if not all(self._settings_key(test.files[0]) == settings
                    for test in tests[1:]):
             if prefix_mixed:
                 _log.info(
