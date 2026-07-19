@@ -81,6 +81,8 @@ class DirectoryScanner:
         standalone: List[LogFile] = []
         files = [path for path in sorted(directory.iterdir())
                  if path.is_file()]
+        _log.info('%s: processing directory (%d files)',
+                  directory, len(files))
         progress = tqdm(files, unit='file', leave=False,
                         desc='Parsing {}'.format(
                             directory.resolve().name),

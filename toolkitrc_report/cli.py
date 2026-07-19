@@ -76,9 +76,12 @@ class Application:
     def _setup_logging(self) -> None:
         level = self.LOG_LEVELS[
             min(self._args.verbose, len(self.LOG_LEVELS) - 1)]
-        logging.basicConfig(
-            level=level, stream=sys.stderr,
-            format='%(levelname)s [%(name)s] %(message)s')
+        fmt = '%(levelname)s [%(name)s] %(message)s'
+        handlers = [logging.StreamHandler(sys.stderr)]
+        if self._args.log is not None:
+            handlers.append(logging.FileHandler(
+                self._args.log, encoding='utf-8'))
+        logging.basicConfig(level=level, format=fmt, handlers=handlers)
         for name in self.DISABLED_LOGGERS:
             logging.getLogger(name).setLevel(logging.CRITICAL + 1)
 
@@ -101,6 +104,9 @@ class Application:
                             default=0,
                             help='log analysis decisions (-v) and '
                                  'low-level details (-vv)')
+        parser.add_argument('--log', type=Path, default=None,
+                            help='also write log messages to this '
+                                 'file, in addition to stderr')
         return parser.parse_args(argv)
 
     @staticmethod
