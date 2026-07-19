@@ -214,8 +214,11 @@ One PDF per detected test, named as described above. Structure:
   voltage, etc.).
 - **Test results** — a table of capacity, energy, cycle time, and
   cycle counts, separately for charge and discharge, with average ±
-  spread across cycles; plus the overall **test status** (see
-  [Test status](#test-status)) and the total test time.
+  spread across cycles; the overall **battery efficiency** — median
+  discharge/charge energy ratio across adjacent full cycle pairs,
+  shown only when at least one such pair exists; plus the overall
+  **test status** (see [Test status](#test-status)) and the total
+  test time.
 - **Test summary** — a table with one row per cycle: mode,
   full/not-full flag, duration, start/end voltage, capacity, energy,
   and per-file status, color-coded green for charge and red for
@@ -308,6 +311,23 @@ Average/spread statistics on the summary page use only full cycles
 when at least one exists for that kind, falling back to all cycles
 otherwise; the spread is omitted when only a single value is
 available.
+
+#### Battery efficiency
+
+The efficiency row pairs up adjacent full cycles of opposite kind
+(a full discharge next to a full charge, in either order) and takes
+the discharge/charge energy ratio of each pair. This is the
+round-trip energy efficiency of that specific pair, not a per-cycle
+value. Full cycles are consumed two at a time in working-cycle
+order, so no cycle contributes to more than one pair; a pair that
+happens to share the same kind (not expected in normal Cycle-mode
+testing) contributes no ratio.
+
+The row is shown only when at least one such pair exists, as the
+median of all pair ratios; the spread is shown only when two or more
+pairs exist. The median is used here rather than the average because
+a single anomalous pair (e.g. from a misdetected full cycle) would
+otherwise skew the number more than it should.
 
 #### Test status
 

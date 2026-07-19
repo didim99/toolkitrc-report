@@ -142,7 +142,10 @@ class BatteryTest:
         Average and spread statistics are taken over full cycles only
         when at least one full cycle of that mode exists, otherwise
         over all cycles of the mode; the spread is omitted when the
-        statistic is based on a single cycle.
+        statistic is based on a single cycle. The "Battery
+        efficiency" row is included only when at least one adjacent
+        full discharge+charge pair exists (see
+        :meth:`_efficiency_row`).
         """
 
         chg, chg_full = self._kind_segments(Segment.KIND_CHARGE)
@@ -160,6 +163,11 @@ class BatteryTest:
                         lambda s: s.energy_wh * 1000.0, 'mWh'),
              self._stat(use_dis,
                         lambda s: s.energy_wh * 1000.0, 'mWh')),
+        ]
+        efficiency = self._efficiency_row()
+        if efficiency is not None:
+            rows.append(efficiency)
+        rows += [
             ('Cycle time',
              self._stat(use_chg, lambda s: float(s.duration),
                         '', as_time=True),
@@ -292,6 +300,57 @@ class BatteryTest:
             self._global_time.append(seg.rel_time + offset)
             offset += seg.rel_time[-1] + seg.interval
 
+    def _efficiency_row(self) -> Optional[SummaryRow]:
+        """
+        "Battery efficiency" row, or None when it can't be computed.
+
+        Efficiency is the discharge/charge energy ratio of each
+        adjacent full discharge+charge pair (in either order),
+        reported as one value spanning both columns: the median
+        across pairs, with the spread shown only when 2+ pairs exist.
+        """
+
+        pairs = self._efficiency_pairs()
+        if not pairs:
+            return None
+        median, spread = self._median_spread(pairs)
+        text = '{} %'.format(format_number(median))
+        if spread is not None:
+            text += ' (\u00b1{:.1f} %)'.format(spread)
+        return 'Battery efficiency', text, None
+
+    def _efficiency_pairs(self) -> List[float]:
+        """
+        Discharge/charge energy ratios (percent) of adjacent full
+        cycle pairs of opposite kind, in working-cycle order.
+
+        Full cycles are consumed two at a time: an adjacent pair of
+        different kinds forms one ratio; a pair of the same kind (not
+        expected in practice) yields no ratio and only the first of
+        the two is consumed, so a following cycle still gets a chance
+        to pair up.
+        """
+
+        full_cycles = [seg for seg, full
+                      in zip(self._segments, self._full_flags)
+                      if full and seg.is_working]
+        ratios: List[float] = []
+        index = 0
+        while index + 1 < len(full_cycles):
+            first, second = full_cycles[index], full_cycles[index + 1]
+            if first.kind == second.kind:
+                index += 1
+                continue
+            charge = (first if first.kind == Segment.KIND_CHARGE
+                      else second)
+            discharge = (first if first.kind == Segment.KIND_DISCHARGE
+                        else second)
+            if charge.energy_wh > 0:
+                ratios.append(
+                    discharge.energy_wh / charge.energy_wh * 100.0)
+            index += 2
+        return ratios
+
     def _stat(self, segments: List[Segment],
               getter: Callable[[Segment], float], units: str,
               as_time: bool = False) -> str:
@@ -371,3 +430,16 @@ class BatteryTest:
             return avg, None
         half_range = (max(values) - min(values)) / 2.0
         return avg, half_range / avg * 100.0
+
+    @staticmethod
+    def _median_spread(values: List[float]
+                       ) -> Tuple[float, Optional[float]]:
+        """
+        Median and half-range deviation in percent of the median.
+        """
+
+        median = float(np.median(values))
+        if len(values) < 2 or not median:
+            return median, None
+        half_range = (max(values) - min(values)) / 2.0
+        return median, half_range / median * 100.0
