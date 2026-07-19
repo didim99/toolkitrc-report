@@ -179,27 +179,26 @@ class BatteryTest:
         ]
         return rows
 
-    def efficiency_pairs(self) -> List[Tuple[int, int, float]]:
+    def round_trip_groups(self) -> List[Tuple[int, int]]:
         """
-        Adjacent full-cycle pairs used for the battery efficiency
-        statistic, as ``(first_number, second_number, ratio_percent)``
+        Every round trip (adjacent charge+discharge pair) in the
+        test's fixed direction, as ``(first_number, second_number)``
         using the 1-based numbering from :meth:`working_cycles`.
 
-        Exposed (rather than protected) because the report renderer
-        needs the cycle numbers to merge the corresponding two rows
-        of the "Eff, %" column in the Test summary table.
+        Unlike :meth:`efficiency_pairs`, cycles are grouped by
+        position and kind alone — full/not-full status doesn't matter
+        here, since capacity and energy are meaningful measurements
+        regardless of whether a cycle reached the full-cycle voltage
+        window. This is what the "Test summary plots" page uses for
+        its shared pass-number x-axis; :meth:`efficiency_pairs` then
+        picks out the subset of these groups usable for a ratio.
 
         A test pass has one dedicated direction (e.g. discharge then
-        charge), taken from the kind of the very first working cycle
-        regardless of whether it's full — that cycle establishes the
-        pattern even if it isn't itself usable for the ratio. A pair
-        is only formed from two cycles that are both truly adjacent
-        (consecutive cycle numbers) *and* both full *and* in that
-        fixed order — cycles are not paired across an intervening
-        not-full cycle, even if each individually would otherwise be
-        full and of a usable kind, since a large numeric gap between
-        them means they aren't really the two halves of one round
-        trip.
+        charge), taken from the kind of the very first working cycle.
+        Cycles are consumed two at a time in that fixed order; a pair
+        that doesn't match it (not expected in practice) yields no
+        group and only the first of the two is consumed, so the
+        following cycle still gets a chance to group up.
         """
 
         cycles = self.working_cycles()
@@ -209,15 +208,39 @@ class BatteryTest:
         second_kind = (Segment.KIND_DISCHARGE
                        if first_kind == Segment.KIND_CHARGE
                        else Segment.KIND_CHARGE)
-        pairs: List[Tuple[int, int, float]] = []
+        groups: List[Tuple[int, int]] = []
         index = 0
         while index + 1 < len(cycles):
-            num_a, first, full_a = cycles[index]
-            num_b, second, full_b = cycles[index + 1]
-            if not (full_a and full_b
-                    and first.kind == first_kind
+            num_a, first, _ = cycles[index]
+            num_b, second, _ = cycles[index + 1]
+            if not (first.kind == first_kind
                     and second.kind == second_kind):
                 index += 1
+                continue
+            groups.append((num_a, num_b))
+            index += 2
+        return groups
+
+    def efficiency_pairs(self) -> List[Tuple[int, int, float]]:
+        """
+        The subset of :meth:`round_trip_groups` where both cycles are
+        full, as ``(first_number, second_number, ratio_percent)`` —
+        the pairs usable for the battery efficiency statistic and the
+        "Eff, %" column in the Test summary table.
+
+        Exposed (rather than protected) because the report renderer
+        needs the cycle numbers to merge the corresponding two rows
+        of that column.
+        """
+
+        cycles = self.working_cycles()
+        by_number = {number: (segment, full)
+                    for number, segment, full in cycles}
+        pairs: List[Tuple[int, int, float]] = []
+        for num_a, num_b in self.round_trip_groups():
+            first, full_a = by_number[num_a]
+            second, full_b = by_number[num_b]
+            if not (full_a and full_b):
                 continue
             charge = (first if first.kind == Segment.KIND_CHARGE
                       else second)
@@ -226,7 +249,6 @@ class BatteryTest:
             if charge.energy_wh > 0:
                 ratio = discharge.energy_wh / charge.energy_wh * 100.0
                 pairs.append((num_a, num_b, ratio))
-            index += 2
         return pairs
 
     def _default_status(self) -> str:

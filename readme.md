@@ -226,6 +226,17 @@ One PDF per detected test, named as described above. Structure:
   (see [Battery efficiency](#battery-efficiency)), with the cell
   spanning the exact two rows that pair's ratio was computed from.
 
+**Page 2 — test summary plots** (only when the test has 3 or more
+working cycles, regardless of full/incomplete status) — charge/
+discharge capacity and charge/discharge energy, one point per round
+trip on a shared "pass number" x-axis, starting from the first round
+trip; capacity and energy include every round trip regardless of
+full/not-full status, since those are raw measurements either way.
+A third plot adds per-pair efficiency (same pairing as the Eff, %
+column, so it only has a point where both cycles of a round trip are
+full — other passes are left as a gap on the shared axis); this
+third plot is included only when at least two such points exist.
+
 **One page per working cycle** — duration/voltage/capacity/energy
 table plus voltage & current, power, capacity & energy plots;
 battery temperature and per-cell voltage plots when the data is

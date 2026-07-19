@@ -95,8 +95,10 @@ class ReportGenerator:
         """
 
         with PdfPages(self._output) as pdf:
+            cycles = self._test.working_cycles()
             self._summary_page(pdf)
-            for number, segment, full in self._test.working_cycles():
+            self._summary_plots_page(pdf, cycles)
+            for number, segment, full in cycles:
                 self._cycle_page(pdf, number, segment, full)
             self._overall_pages(pdf)
 
@@ -139,6 +141,76 @@ class ReportGenerator:
         ax.set_axis_off()
         ax.set_title('Test summary', fontsize=11)
         self._test_summary_table(ax, cycles)
+        pdf.savefig(fig)
+        plt.close(fig)
+
+    def _summary_plots_page(self, pdf: PdfPages,
+                            cycles: List[Tuple[int, Segment, bool]]
+                            ) -> None:
+        """
+        Per-round-trip capacity/energy/efficiency overview page.
+
+        Only rendered when the test has at least 3 working cycles,
+        regardless of full/incomplete status. Each round trip (an
+        adjacent charge+discharge pair, from
+        :meth:`BatteryTest.round_trip_groups`) becomes one x-axis
+        position ("pass number"), starting from the first such round
+        trip. Capacity and energy are plotted for every round trip
+        regardless of full/not-full status, since those are raw
+        measurements and remain meaningful either way; efficiency
+        needs both cycles of a round trip to be full to mean anything
+        (see :meth:`BatteryTest.efficiency_pairs`), so its series
+        has a gap at any pass that doesn't qualify, and the whole
+        efficiency subplot is left out when fewer than two passes
+        qualify. All subplots share one x-axis.
+        """
+
+        if len(cycles) < 3:
+            return
+        groups = self._test.round_trip_groups()
+        eff_by_pair = {(a, b): ratio for a, b, ratio
+                      in self._test.efficiency_pairs()}
+        by_number = {number: segment for number, segment, _ in cycles}
+        passes = list(range(1, len(groups) + 1))
+        chg_cap: List[float] = []
+        dis_cap: List[float] = []
+        chg_ene: List[float] = []
+        dis_ene: List[float] = []
+        ratios: List[float] = []
+        for num_a, num_b in groups:
+            seg_a, seg_b = by_number[num_a], by_number[num_b]
+            charge = (seg_a if seg_a.kind == Segment.KIND_CHARGE
+                     else seg_b)
+            discharge = (seg_a if seg_a.kind == Segment.KIND_DISCHARGE
+                        else seg_b)
+            chg_cap.append(charge.cap_mah / 1000.0)
+            dis_cap.append(discharge.cap_mah / 1000.0)
+            chg_ene.append(charge.energy_wh)
+            dis_ene.append(discharge.energy_wh)
+            ratios.append(eff_by_pair.get((num_a, num_b), np.nan))
+
+        show_efficiency = sum(not np.isnan(r) for r in ratios) >= 2
+        n_plots = 2 + int(show_efficiency)
+        fig = plt.figure(figsize=self.PAGE_SIZE)
+        fig.suptitle('Test summary plots', fontsize=13,
+                     fontweight='bold')
+        grid = GridSpec(n_plots, 1, figure=fig, top=0.92, bottom=0.08,
+                        hspace=0.25)
+        cap_ax = fig.add_subplot(grid[0])
+        self._plot_pass_pair(cap_ax, passes, chg_cap, dis_cap,
+                             'Capacity, Ah')
+        ene_ax = fig.add_subplot(grid[1], sharex=cap_ax)
+        self._plot_pass_pair(ene_ax, passes, chg_ene, dis_ene,
+                             'Energy, Wh')
+        self._style_pass_axis(cap_ax, passes, show_xlabel=False)
+        self._style_pass_axis(ene_ax, passes,
+                              show_xlabel=not show_efficiency)
+        if show_efficiency:
+            eff_ax = fig.add_subplot(grid[2], sharex=cap_ax)
+            eff_ax.plot(passes, ratios, marker='o',
+                       color='tab:purple')
+            eff_ax.set_ylabel('Efficiency, %')
+            self._style_pass_axis(eff_ax, passes, show_xlabel=True)
         pdf.savefig(fig)
         plt.close(fig)
 
@@ -308,10 +380,10 @@ class ReportGenerator:
             else:
                 row.append(('-', 1, 1, None))
             rows.append(row)
-        widths = [0.05, 0.10, 0.06, 0.11, 0.13,
-                  0.12, 0.12, 0.12, 0.11, 0.08]
+        widths = [0.033, 0.128, 0.044, 0.115, 0.146,
+                  0.133, 0.116, 0.140, 0.072, 0.073]
         self._draw_table(ax, rows, widths, font_size=8,
-                         header_rows=1)
+                         header_rows=1, header_font_size=7)
 
     def _cycle_table(self, ax: Axes, segment: Segment) -> None:
         rows: List[List[TableCell]] = [
@@ -323,8 +395,8 @@ class ReportGenerator:
 
     def _draw_table(self, ax: Axes, rows: List[List[TableCell]],
                     col_widths: List[float], font_size: int = 9,
-                    align: str = 'center',
-                    header_rows: int = 0) -> None:
+                    align: str = 'center', header_rows: int = 0,
+                    header_font_size: Optional[int] = None) -> None:
         """
         Render a table with column/row-span and background color
         support.
@@ -341,8 +413,13 @@ class ReportGenerator:
         span's label can't be centered within a single constituent
         cell either, so its cells stay blank and the text is added
         separately once real (post-layout) coordinates are available.
+        ``header_font_size`` (defaulting to ``font_size``) lets header
+        labels use a smaller size than the body when columns are
+        narrow relative to their longest header text.
         """
 
+        header_size = (header_font_size if header_font_size is not None
+                      else font_size)
         fig_height = ax.figure.get_size_inches()[1]
         ax_height = ax.get_position().height * fig_height
         row_height = min(self.TABLE_ROW_HEIGHT / ax_height,
@@ -379,7 +456,9 @@ class ReportGenerator:
                             else '', loc=align,
                             facecolor=color if color else 'none')
                         cell.visible_edges = edges
-                        cell.set_fontsize(font_size)
+                        cell.set_fontsize(
+                            header_size if r < header_rows
+                            else font_size)
                         if r < header_rows:
                             cell.get_text().set_fontweight('bold')
                 col += colspan
@@ -509,6 +588,40 @@ class ReportGenerator:
         ax.set_ylabel('Cell voltage, V')
         ax.legend(loc='best', fontsize=7, ncol=4)
         self._style(ax)
+
+    def _plot_pass_pair(self, ax: Axes, passes: List[int],
+                        charge_values: List[float],
+                        discharge_values: List[float],
+                        ylabel: str) -> None:
+        """
+        Charge and discharge series, one point per round trip.
+        """
+
+        ax.plot(passes, charge_values, marker='o',
+                color='tab:green', label='Charge')
+        ax.plot(passes, discharge_values, marker='o',
+                color='tab:red', label='Discharge')
+        ax.set_ylabel(ylabel)
+        ax.legend(loc='best', fontsize=7)
+
+    def _style_pass_axis(self, ax: Axes, passes: List[int],
+                         show_xlabel: bool) -> None:
+        """
+        Grid/margins for a pass-number (round-trip index) x-axis.
+
+        Unlike :meth:`_style`, the x-axis here is a small integer
+        count rather than time, so ticks are forced to the actual
+        pass numbers and the "Pass #" label is only drawn on the
+        bottom-most subplot of the page (the axis is shared).
+        """
+
+        ax.grid(True, alpha=0.3)
+        ax.margins(x=0.05)
+        ax.tick_params(axis='both', labelsize=8)
+        if passes:
+            ax.set_xticks(passes)
+        if show_xlabel:
+            ax.set_xlabel('Pass #')
 
     def _style(self, ax: Axes) -> None:
         ax.grid(True, alpha=0.3)
